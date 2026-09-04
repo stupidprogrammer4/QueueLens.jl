@@ -2,7 +2,18 @@
 
 julia_version = "1.12.7"
 manifest_format = "2.0"
-project_hash = "2bf78ce8a6320151b49a337bd27c9e3aba564db3"
+project_hash = "8e0e74965b493e8d351c1b4e69ef6f9c2f92850c"
+
+[[deps.DataStructures]]
+deps = ["OrderedCollections"]
+git-tree-sha1 = "b0bc6d2cad1fed8b7fd59a1551a991cb3d2809e6"
+uuid = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+version = "0.19.6"
+
+[[deps.OrderedCollections]]
+git-tree-sha1 = "05f45c2e0de6259db764adbfd2f1dc6d3f8de13c"
+uuid = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
+version = "2.0.1"
 
 [[deps.QueueLens]]
 path = "."
