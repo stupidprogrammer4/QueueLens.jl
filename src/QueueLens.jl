@@ -1,31 +1,15 @@
 module QueueLens
 
-struct Job
-    id::Int
-    arrival_time::Float64
-end
+# ---------- Public API ----------
+export Job, JobResult
+export simulate
 
-struct JobResult
-    id::Int
-    arrival_time::Float64
-    completion_time::Float64
-    waiting_time::Float64
-    latency::Float64
-end
-
-function process_jobs(jobs::Vector{Job}, service_time::Float64)
-    queue::Vector{JobResult} = []
-    jobs = sort(jobs, by=x -> x.arrival_time)
-    worker_free_at = 0.0
-    for job in jobs
-        worker_free_at = max(worker_free_at, job.arrival_time)
-        completion_time = worker_free_at + service_time
-        waiting_time = worker_free_at - job.arrival_time
-        latency = waiting_time + service_time
-        push!(queue, JobResult(job.id, job.arrival_time, completion_time, waiting_time, latency))
-        worker_free_at = completion_time
-    end
-    return queue
-end
+# ---------- Implementation ----------
+# Order matters: types must be defined before they are named in another
+# type's fields or in a method signature.
+include("jobs.jl")      # Job, JobRecord, JobResult
+include("events.jl")    # SimEvent and its subtypes
+include("state.jl")     # SimState, schedule!, pop_next!
+include("engine.jl")    # handle!, start_next_job!, simulate
 
 end # module QueueLens
