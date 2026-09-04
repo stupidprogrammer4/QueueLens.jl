@@ -7,4 +7,6 @@ using QueueLens
     include("calendar_tests.jl")
     include("engine_tests.jl")
     include("scenario_tests.jl")
+    include("metric_tests.jl")
+    include("repeated_tests.jl")
 end

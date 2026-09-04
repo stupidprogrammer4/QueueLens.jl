@@ -48,6 +48,16 @@
         @test sample_mean(draws(Exponential(0.25), 12, 200_000)) ≈ 4.0 rtol = 0.02
     end
 
+    @testset "sampling n at once matches sampling n times" begin
+        d = LogNormal(1.1, 0.6)
+
+        many = sample(Xoshiro(21), d, 50)
+        one_at_a_time = (rng = Xoshiro(21); [sample(rng, d) for _ in 1:50])
+
+        @test length(many) == 50
+        @test many == one_at_a_time
+    end
+
     @testset "LogNormal sample mean matches exp(mu + sigma^2 / 2)" begin
         # NOT exp(mu) — that is the trap. With sigma = 0.6 the two differ by
         # about 20%, so a wrong formula here still looks plausible.

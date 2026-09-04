@@ -2,6 +2,8 @@ module QueueLens
 
 # ---------- Public API ----------
 export Job, JobResult
+export Summary, summarize
+export Estimate, RepeatedSummary, simulate_repeated
 export Scenario
 export Distribution, Constant, Exponential, LogNormal, sample
 export simulate
@@ -14,6 +16,7 @@ include("scenario.jl")     # Scenario
 include("jobs.jl")      # Job, JobRecord, JobResult
 include("events.jl")    # SimEvent and its subtypes
 include("state.jl")     # SimState, schedule!, pop_next!
+include("metrics.jl")      # Summary, percentile, summarize
 include("engine.jl")    # handle!, start_next_job!, simulate
 
 end # module QueueLens

@@ -133,3 +133,19 @@ closed-form inverse — but `randn` already produces `Z` directly.
 function sample(rng::AbstractRNG, d::LogNormal)
     return exp(d.mu + d.sigma * randn(rng))
 end
+
+"""
+    sample(rng, d::Distribution, n::Int) -> Vector{Float64}
+
+Draw `n` independent variates from `d`.
+
+Dispatches to the single-draw method, so it works for every distribution
+without a method per type. `n` must be positive.
+
+"""
+function sample(rng::AbstractRNG, d::Distribution, n::Int)
+    if n <= 0
+        throw(ArgumentError("n must be positive, got $n"))
+    end
+    return [sample(rng, d) for _ in 1:n]
+end
