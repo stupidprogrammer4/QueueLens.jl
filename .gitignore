@@ -1,0 +1,27 @@
+# Julia
+# Manifest.toml pins exact dependency versions. It is committed here because
+# QueueLens reports must be reproducible: a simulation result is only meaningful
+# alongside the exact package versions that produced it. Uncomment the next line
+# if this ever becomes a registered library rather than an experiment tool.
+# Manifest.toml
+
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+/deps/deps.jl
+/deps/build.log
+/docs/build/
+/docs/site/
+
+# Simulation output — regenerated from a scenario file plus its seed
+/experiments/out/
+/output/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store

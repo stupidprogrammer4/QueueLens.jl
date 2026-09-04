@@ -1,0 +1,13 @@
+name = "QueueLens"
+uuid = "6336d9bf-21b5-466e-b10f-159fba371af7"
+version = "0.1.0"
+authors = ["stupidprogrammer4 <captainjoker757@gmail.com>"]
+
+[compat]
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
