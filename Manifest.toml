@@ -2,7 +2,16 @@
 
 julia_version = "1.12.7"
 manifest_format = "2.0"
-project_hash = "a6bbfb131be3966e5a022e16eacf36e3d74c6336"
+project_hash = "c07841cfdd39ccb0703f007f77de826f0845f76a"
+
+[[deps.Artifacts]]
+uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
+version = "1.11.0"
+
+[[deps.CompilerSupportLibraries_jll]]
+deps = ["Artifacts", "Libdl"]
+uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
+version = "1.3.1+2"
 
 [[deps.DataStructures]]
 deps = ["OrderedCollections"]
@@ -10,13 +19,27 @@ git-tree-sha1 = "b0bc6d2cad1fed8b7fd59a1551a991cb3d2809e6"
 uuid = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
 version = "0.19.6"
 
+[[deps.Libdl]]
+uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+version = "1.11.0"
+
+[[deps.LinearAlgebra]]
+deps = ["Libdl", "OpenBLAS_jll", "libblastrampoline_jll"]
+uuid = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+version = "1.12.0"
+
+[[deps.OpenBLAS_jll]]
+deps = ["Artifacts", "CompilerSupportLibraries_jll", "Libdl"]
+uuid = "4536629a-c528-5b80-bd46-f80d51c5b363"
+version = "0.3.29+0"
+
 [[deps.OrderedCollections]]
 git-tree-sha1 = "05f45c2e0de6259db764adbfd2f1dc6d3f8de13c"
 uuid = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
 version = "2.0.1"
 
 [[deps.QueueLens]]
-deps = ["DataStructures"]
+deps = ["DataStructures", "Random"]
 path = "."
 uuid = "6336d9bf-21b5-466e-b10f-159fba371af7"
 version = "0.1.0"
@@ -29,3 +52,20 @@ version = "1.11.0"
 [[deps.SHA]]
 uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 version = "0.7.0"
+
+[[deps.Statistics]]
+deps = ["LinearAlgebra"]
+git-tree-sha1 = "e2b53ce13a53367e96601081e33d34746b571bad"
+uuid = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+version = "1.11.5"
+
+    [deps.Statistics.extensions]
+    SparseArraysExt = ["SparseArrays"]
+
+    [deps.Statistics.weakdeps]
+    SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+
+[[deps.libblastrampoline_jll]]
+deps = ["Artifacts", "Libdl"]
+uuid = "8e850b90-86db-534c-a0d3-1478176c7d93"
+version = "5.15.0+0"
