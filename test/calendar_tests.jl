@@ -3,8 +3,11 @@
 
 @testset "event calendar" begin
 
+    # The calendar does not depend on the scenario; any valid one will do.
+    calendar_state() = QueueLens.SimState(Scenario(Constant(1.0), Constant(1.0), 1, 0))
+
     @testset "events come out in time order regardless of insertion order" begin
-        state = QueueLens.SimState()
+        state = calendar_state()
 
         QueueLens.schedule!(state, QueueLens.JobArrival(5.0, 3))
         QueueLens.schedule!(state, QueueLens.JobArrival(1.0, 1))
@@ -17,7 +20,7 @@
     end
 
     @testset "mixed event types are ordered by time, not by type" begin
-        state = QueueLens.SimState()
+        state = calendar_state()
 
         QueueLens.schedule!(state, QueueLens.ServiceCompleted(4.0, 1))
         QueueLens.schedule!(state, QueueLens.JobArrival(2.0, 2))
@@ -27,7 +30,7 @@
     end
 
     @testset "scheduling into the past is rejected" begin
-        state = QueueLens.SimState()
+        state = calendar_state()
         state.now = 10.0
 
         @test_throws Exception QueueLens.schedule!(state, QueueLens.JobArrival(9.0, 1))
@@ -37,7 +40,7 @@
         # Whatever tie-breaking rule you chose, it must be stable: building the
         # same calendar twice must produce the same output order every time.
         build() = begin
-            state = QueueLens.SimState()
+            state = calendar_state()
             QueueLens.schedule!(state, QueueLens.ServiceCompleted(3.0, 1))
             QueueLens.schedule!(state, QueueLens.JobArrival(3.0, 2))
             QueueLens.schedule!(state, QueueLens.JobArrival(3.0, 3))

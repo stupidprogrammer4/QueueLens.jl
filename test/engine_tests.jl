@@ -53,7 +53,9 @@
 
         # Rebuild the state the same way simulate does so the log is reachable.
         # (Milestone 2 replaces clock_log with a proper Recorder.)
-        state = QueueLens.SimState()
+        scenario = Scenario(Constant(0.0), Constant(0.0), length(jobs), 0)
+        state = QueueLens.SimState(scenario)
+        state.jobs_generated = length(jobs)   # no lazy generation on this path
         for job in jobs
             QueueLens.schedule!(state, QueueLens.JobArrival(job.arrival_time, job.id))
             state.records[job.id] = QueueLens.JobRecord(job)

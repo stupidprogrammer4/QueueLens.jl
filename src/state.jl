@@ -38,24 +38,42 @@ function Base.isless(a::CalendarEntry, b::CalendarEntry)
 end
 
 """
-    SimState()
+    SimState(scenario, rng = Xoshiro(scenario.seed))
 
 Everything that changes as the simulation runs. Mutable by definition.
 
+Parameterised on the RNG type so that `rng` has a concrete type in the hot
+loop. Writing `rng::AbstractRNG` would box every draw; only one RNG type is
+ever used within a run, so there is nothing to gain from that.
+
 Fields:
 
-  - `now`           — the virtual clock. Only the main loop in engine.jl writes it.
-  - `calendar`      — pending events as a min-heap. See [`schedule!`](@ref).
-  - `next_sequence` — stamp for the next entry, giving equal timestamps a
-                      deterministic order. Only [`schedule!`](@ref) advances it.
-  - `waiting`       — ids of jobs queued for the worker, in FIFO order.
-  - `busy`          — whether the single worker is currently serving a job.
-  - `records`       — in-flight bookkeeping, keyed by job id.
-  - `results`       — completed jobs, in completion order.
-  - `clock_log`     — every value `now` has taken, for the monotonicity test.
-                      Milestone 1 only; a proper Recorder replaces this later.
+  - `rng`            — the run's only source of randomness. Guide section 12:
+                       never call bare `rand()` anywhere.
+  - `scenario`       — the run's description, so handlers can draw the next
+                       arrival without threading it through every signature.
+  - `now`            — the virtual clock. Only the main loop writes it.
+  - `calendar`       — pending events as a min-heap. See [`schedule!`](@ref).
+  - `next_sequence`  — stamp for the next entry, giving equal timestamps a
+                       deterministic order. Only [`schedule!`](@ref) advances it.
+  - `waiting`        — ids of jobs queued for the worker, in FIFO order.
+  - `busy`           — whether the single worker is currently serving a job.
+  - `records`        — in-flight bookkeeping, keyed by job id.
+  - `results`        — completed jobs, in completion order.
+  - `clock_log`      — every value `now` has taken, for the monotonicity test.
+                       Milestone 1 only; a proper Recorder replaces this later.
+  - `jobs_generated` — how many arrivals have been created so far. Generation
+                       stops once this reaches `scenario.num_jobs`, which is
+                       also how `simulate(::Vector{Job})` disables lazy
+                       generation: it starts the counter already at the limit.
+  - `max_calendar_size` — high-water mark of the calendar, maintained by
+                       [`schedule!`](@ref). Instrumentation only: it is what
+                       proves lazy arrival generation actually keeps the
+                       calendar small.
 """
-mutable struct SimState
+mutable struct SimState{R<:AbstractRNG}
+    rng::R
+    scenario::Scenario
     now::Float64
     calendar::BinaryMinHeap{CalendarEntry}
     next_sequence::Int
@@ -64,9 +82,14 @@ mutable struct SimState
     records::Dict{Int,JobRecord}
     results::Vector{JobResult}
     clock_log::Vector{Float64}
+    jobs_generated::Int
+    max_calendar_size::Int
 end
 
-SimState() = SimState(0.0, BinaryMinHeap{CalendarEntry}(), 0, Int[], false, Dict{Int,JobRecord}(), JobResult[], Float64[])
+function SimState(scenario::Scenario, rng::R = Xoshiro(scenario.seed)) where {R<:AbstractRNG}
+    return SimState{R}(rng, scenario, 0.0, BinaryMinHeap{CalendarEntry}(), 0,
+                       Int[], false, Dict{Int,JobRecord}(), JobResult[], Float64[], 0, 0)
+end
 
 """
     schedule!(state, event)
@@ -97,6 +120,7 @@ function schedule!(state::SimState, event::SimEvent)
     entry = CalendarEntry(event, state.next_sequence)
     push!(state.calendar, entry)
     state.next_sequence += 1
+    state.max_calendar_size = max(state.max_calendar_size, length(state.calendar))
 end
 
 """

@@ -13,6 +13,7 @@ rule in exactly one place.
 function handle!(state::SimState, event::JobArrival)
     state.waiting = push!(state.waiting, event.job_id)
     start_next_job!(state)
+    schedule_next_arrival!(state)
 end
 
 """
@@ -88,7 +89,12 @@ generation — each arrival scheduling the next — so that the calendar holds a
 handful of events rather than one per job.
 """
 function simulate(jobs::Vector{Job})
-    state = SimState()
+    # The distributions are placeholders: this path never samples them, because
+    # jobs_generated already sits at the limit, which switches lazy generation
+    # off. See the `jobs_generated` note on SimState.
+    scenario = Scenario(Constant(0.0), Constant(0.0), length(jobs), 0)
+    state = SimState(scenario)
+    state.jobs_generated = length(jobs)
     for job in jobs
         QueueLens.schedule!(state, QueueLens.JobArrival(job.arrival_time, job.id))
         state.records[job.id] = JobRecord(job)
@@ -100,5 +106,60 @@ function simulate(jobs::Vector{Job})
         handle!(state, event)
     end
 
+    return state.results
+end
+
+"""
+    schedule_next_arrival!(state)
+
+Draw the gap to the next arrival, create its `JobRecord`, and put its
+`JobArrival` on the calendar — unless `scenario.num_jobs` arrivals have already
+been generated, in which case do nothing and let the run wind down.
+
+This is what keeps the calendar small. Scheduling every arrival up front makes
+the calendar as large as the job count; generating them one at a time leaves it
+holding only the next arrival and the in-flight completion, whatever the job
+count is.
+
+Both the gap and the service time are drawn here, from `state.rng`. Draw them
+in a fixed order and never conditionally, or the same seed will stop
+reproducing the same run.
+"""
+function schedule_next_arrival!(state::SimState)
+    if state.jobs_generated < state.scenario.num_jobs
+        gap = sample(state.rng, state.scenario.arrivals)
+        service_time = sample(state.rng, state.scenario.service)
+        arrival_time = state.now + gap
+        job_id = state.jobs_generated + 1
+        job = Job(job_id, arrival_time, service_time)
+        state.records[job_id] = JobRecord(job)
+        QueueLens.schedule!(state, QueueLens.JobArrival(arrival_time, job_id))
+        state.jobs_generated += 1
+    end
+end
+
+"""
+    simulate(scenario::Scenario) -> Vector{JobResult}
+
+Run `scenario` to completion and return one `JobResult` per job.
+
+Builds the state, seeds it from `scenario.seed`, schedules the first arrival,
+and then runs the same loop as [`simulate(::Vector{Job})`](@ref) — the loop
+itself does not know arrivals are being generated as it goes.
+
+The first arrival lands at `t = sample(rng, scenario.arrivals)`, not at
+`t = 0`: the system starts empty and waits one gap like any other. Every gap
+is therefore drawn the same way, at the cost of no scenario run ever having an
+arrival at exactly zero. Scenarios built from an explicit `Vector{Job}` are
+free to place a job at zero.
+"""
+function simulate(scenario::Scenario)
+    state = SimState(scenario)
+    schedule_next_arrival!(state)
+    while !isempty(state.calendar)
+        event = QueueLens.pop_next!(state)
+        state.now = event.time
+        handle!(state, event)
+    end
     return state.results
 end
