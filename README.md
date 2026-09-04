@@ -88,9 +88,9 @@ protect:
 
 | Milestone | Scope | Status |
 |---|---|---|
-| 0 | Julia foundations: package skeleton, deterministic hand-calculated simulation, event-ordering tests | in progress |
-| 1 | Minimal discrete-event engine: event calendar, FIFO queue, worker capacity, recorder | planned |
-| 2 | Probabilistic workloads: arrival/service distributions, seeds, percentiles, confidence intervals | planned |
+| 0 | Julia foundations: package skeleton, deterministic hand-calculated simulation, event-ordering tests | done |
+| 1 | Minimal discrete-event engine: event calendar, FIFO queue, worker capacity, recorder | done |
+| 2 | Probabilistic workloads: arrival/service distributions, seeds, percentiles, confidence intervals | in progress |
 | 3 | Shared resource pools and backpressure: DB pool, bounded queues, admission policies, utilization | planned |
 | 4 | Failure, timeout and retry: injection, timeout events, backoff policies, retry amplification | planned |
 | 5 | CLI, TOML configuration, CSV/JSON summaries and plots | planned |
@@ -143,16 +143,27 @@ base_delay_ms = 100.0
 ```text
 QueueLens/
 ├── Project.toml
+├── PROGRESS.md
 ├── src/
-│   └── QueueLens.jl
+│   ├── QueueLens.jl      # module, exports, includes — no logic
+│   ├── distributions.jl  # Constant, Exponential, LogNormal, sample
+│   ├── scenario.jl       # Scenario
+│   ├── jobs.jl           # Job, JobRecord, JobResult
+│   ├── events.jl         # SimEvent and its subtypes
+│   ├── state.jl          # SimState, the event calendar
+│   └── engine.jl         # handlers and the main loop
 ├── test/
-│   └── runtests.jl
+│   ├── runtests.jl
+│   ├── distribution_tests.jl
+│   ├── calendar_tests.jl
+│   ├── engine_tests.jl
+│   └── scenario_tests.jl
 └── README.md
 ```
 
-Files are split only when responsibilities become real. The target layout adds
-`events.jl`, `engine.jl`, `resources.jl`, `policies.jl` and `metrics.jl` under
-`src/`, plus `scenarios/`, `experiments/`, `docs/` and `benchmarks/`.
+Files are split only when responsibilities become real. Later milestones add
+`resources.jl`, `policies.jl` and `metrics.jl` under `src/`, plus `scenarios/`,
+`experiments/`, `docs/` and `benchmarks/`.
 
 ## A note on interpretation
 
