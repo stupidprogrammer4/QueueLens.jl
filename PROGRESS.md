@@ -9,13 +9,13 @@ is still open. Kept per section 14 of the project guide.
 |---|---|---|
 | 0 | Julia foundations, package skeleton, deterministic run | done |
 | 1 | Minimal discrete-event engine | done |
-| 2 | Probabilistic workloads | in progress |
+| 2 | Probabilistic workloads | done |
 | 3 | Shared resource pools and backpressure | not started |
 | 4 | Failure, timeout and retry | not started |
 | 5 | CLI, configuration and plots | not started |
 | 6 | Parameter sweep and recommendation | not started |
 
-Test suite: 1609 passing, 0 failing.
+Test suite: 1668 passing, 0 failing.
 
 ## Milestone 0 — done
 
@@ -50,7 +50,7 @@ result.
 The milestone-0 tests became the regression net for the rewrite. That was the
 first concrete payoff from having written them.
 
-## Milestone 2 — in progress
+## Milestone 2 — done
 
 Done:
 
@@ -60,31 +60,52 @@ Done:
 - lazy arrival generation: each arrival schedules the next
 - `SimState` parameterised on the RNG type, carrying the run's rng and scenario
 
-Not done yet: warm-up handling, `summarize` with percentiles and confidence
-intervals, repeated runs across seeds.
+Also done: `summarize` with percentiles and an optional warm-up discard,
+`percentile` by the nearest-rank definition, `sample(rng, d, n)`,
+`simulate_repeated` reporting every quantity as `value ± halfwidth` across
+seeds.
+
+Definition of done met: the same seed reproduces the same run, distribution
+parameters are validated at construction, and results report both central
+tendency (mean, P50) and tail (P95, P99) — each with a confidence interval.
 
 ### Verified against theory
 
-With arrivals `Exponential(8.0)`, mean service 0.1s (so `rho = 0.8`) and 50,000
-jobs, holding the *mean* service time fixed and varying only its variance:
-
-| service | `C^2` | mean wait (P–K) | mean wait (simulated) | P99 latency |
-|---|---|---|---|---|
-| `Constant(0.1)` | 0 | 0.200 | 0.197 | 1.122 |
-| `LogNormal`, sigma 0.6 | 0.43 | 0.287 | 0.268 | 1.527 |
-| `LogNormal`, sigma 1.0 | 1.72 | 0.544 | 0.527 | 3.816 |
-
-Compared against the Pollaczek–Khinchine formula for M/G/1:
+With arrivals `Exponential(8.0)`, mean service 0.1s (so `rho = 0.8`), holding
+the *mean* service time fixed and varying only its variance. Compared against
+the Pollaczek-Khinchine formula for M/G/1:
 
     W = rho * E[S] * (1 + C^2) / (2 * (1 - rho))
 
-Mean waiting time rises 2.7x and P99 latency 3.4x with no change to the mean
-service time or the arrival rate. Variance alone drives it.
+Mean waiting time, averaged over 5 seeds at 50,000 jobs each:
 
-Note the simulated figures sit consistently *below* theory, by 2–4%. That is not
-sampling noise — it is directional, and it is the warm-up transient: the run
-starts with an empty system, so early jobs barely wait and drag the average
-down. See the open questions.
+| service | `C^2` | W theory | W simulated | gap |
+|---|---|---|---|---|
+| `Constant(0.1)` | 0 | 0.200 | 0.201 | −0.7% |
+| `LogNormal`, sigma 1.0 | 1.72 | 0.544 | 0.546 | −0.4% |
+
+Mean waiting time rises 2.7x, and P99 latency 3.4x, with no change to the mean
+service time or the arrival rate. Variance alone drives it. The engine sits on
+the analytical result.
+
+### What a single seed cost us
+
+An earlier version of this section reported a consistent 2–4% shortfall against
+theory from a **single run at seed 42**, and explained it as the warm-up
+transient: a run starts with an empty system, so early jobs barely wait.
+
+That explanation was wrong. Adding a 10% warm-up discard did not close the gap;
+it moved the numbers slightly further from theory. A second explanation —
+finite-run under-sampling of rare long busy periods — was also wrong: the gap
+does not shrink between 50,000 and 2,000,000 jobs.
+
+Averaging over 5 seeds makes it vanish at every run length. There was no bias.
+Seed 42 simply landed low, and 1.5% of noise was mistaken for signal, twice.
+
+The lesson is the one milestone 2 is built around: **one run is not a
+measurement**. Until `summarize` reports a confidence interval across seeds,
+any single number it produces can be read as evidence for a story that is not
+there.
 
 ## Decisions
 
@@ -132,13 +153,31 @@ considered.
     example is not implemented yet.
 13. **Plotting will use Makie.jl**, and will not be a dependency of QueueLens
     itself — the core simulation must run without it.
+14. **Percentiles use the nearest-rank definition**, so a reported P99 is a
+    latency some job actually experienced rather than an interpolated value.
+    At least nine sample-quantile definitions are in common use and they
+    disagree on small samples, so the choice is documented rather than assumed.
+15. **Confidence intervals use Student-t, not the normal 1.96.** Run counts here
+    are small: at 5 runs the correct multiplier is 2.776, so the normal
+    approximation would understate the interval by 30% — which is the same
+    class of mistake as reporting a single seed. A small t-table is carried in
+    the source rather than adding `Distributions.jl`.
+16. **`estimate` of a single value returns an `Inf` half-width**, not `0.0`.
+    One observation says nothing about spread, and a zero half-width would
+    claim perfect certainty.
+17. **Seeds for repeated runs are consecutive**, `scenario.seed + i - 1`, so a
+    whole experiment is reproducible from one number.
+18. **`throughput` is measured from the first retained job's arrival** to the
+    last completion, so a warm-up discard does not leave the denominator
+    counting time in which the discarded jobs ran.
 
 ## Open questions
 
-- **Warm-up period.** Runs start with an empty system, which biases mean waiting
-  time downward by a few percent against M/G/1 theory. How many samples should be
-  discarded, and how should that be chosen and documented? Section 12 requires it
-  to be documented either way.
+- **Warm-up period.** `summarize` supports `warmup_fraction`, but there is no
+  evidence yet that this workload needs it: at `rho = 0.8` the measured effect
+  is smaller than seed-to-seed noise. Section 12 still requires the discard used
+  to be documented alongside any result. A workload closer to saturation, where
+  the transient is longer, would be the case to test it against.
 - **Reporting.** `summarize(results)` with P50/P95/P99 and confidence intervals
   across repeated seeds is still missing. Percentiles matter more than the mean
   here: for a lognormal service time, about 62% of jobs finish faster than the
@@ -159,5 +198,12 @@ considered.
   CDF, and connected it to `randexp(rng) / rate`.
 - Predicted the effect of service-time variance at fixed mean, then measured it.
   Verified against Pollaczek–Khinchine.
+- Predicted that discarding a warm-up would close the gap to theory. It did not;
+  the gap was single-seed noise. See "What a single seed cost us".
+- Built a text histogram and watched it fail on a heavy tail: scaling the axis
+  by `maximum` lets one sample in 100,000 set the scale for all twenty bins, so
+  97% of a `LogNormal(sigma = 1.2)` sample lands in the first bar. Fixed by
+  labelling every bin with its edges and share, so the numbers carry the story
+  the bars cannot.
 - Predicted the calendar's high-water mark under lazy generation. Answer: 2 —
   the next arrival plus the in-flight completion — regardless of job count.
