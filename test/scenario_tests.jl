@@ -40,9 +40,8 @@
         # Gaps of 2.0 against a service time of 3.0: the worker falls 1.0
         # further behind on every job, so waiting times are 0, 1, 2.
         #
-        # Deliberately written so it holds whether the first arrival lands at
-        # t = 0 or at t = 2.0 — that decision is yours, and this test does not
-        # prejudge it.
+        # These assertions check gaps and durations, not the absolute time of
+        # the first arrival. The current implementation starts at t = 2.0.
         s = Scenario(Constant(2.0), Constant(3.0), 3, 1)
         r = simulate(s)
 
@@ -56,8 +55,8 @@
     end
 
     @testset "lazy generation keeps the calendar small" begin
-        # This is the answer to the prediction question. Drives the loop by
-        # hand so that the state stays reachable after the run.
+        # Drive the loop directly to inspect the calendar's high-water mark:
+        # at most one pending arrival and one service completion.
         s = Scenario(Exponential(0.5), Constant(1.0), 500, 3)
         state = QueueLens.SimState(s)
 

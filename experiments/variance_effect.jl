@@ -1,7 +1,8 @@
 # Does service-time variance matter when the mean is held fixed?
 #
 # Compares simulated mean waiting time against the Pollaczek-Khinchine formula
-# for M/G/1, with and without a warm-up discard.
+# for M/G/1, with and without a warm-up discard, using a single seed.
+# Seed-to-seed uncertainty is measured separately with simulate_repeated.
 #
 # Run with:  julia --project=. experiments/variance_effect.jl
 
@@ -59,8 +60,8 @@ function main()
     end
 
     println()
-    println("W theory assumes steady state. A run starts empty, so early jobs")
-    println("barely wait; discarding them should move W raw toward W theory.")
+    println("W theory assumes steady state; this experiment uses one seed.")
+    println("Warm-up need not close the gap. Use repeated seeds to assess uncertainty.")
 end
 
 main()

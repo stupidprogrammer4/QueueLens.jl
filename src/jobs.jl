@@ -7,7 +7,7 @@ A unit of work entering the system. Immutable: a job's identity, arrival time
 and service demand are facts that never change once the job exists.
 
 `service_time` lives on the job rather than being a parameter of the run,
-because in milestone 2 each job draws its own service time from a
+because scenario runs draw each job's service time from a
 distribution. A single per-run service time is just the degenerate case where
 every job happens to draw the same number.
 """
@@ -44,7 +44,7 @@ JobRecord(job::Job) = JobRecord(job.id, job.arrival_time, job.service_time, NaN)
 
 The terminal outcome of one job. Immutable — a completed job is history.
 
-Invariants (guide section 12: every logical job has one terminal outcome):
+Timing invariants for a completed job:
 
   - `arrival_time <= start_time <= completion_time`
   - `waiting_time == start_time - arrival_time`

@@ -1,7 +1,5 @@
-# Aggregate metrics over the results of one run.
-#
-# Nothing here touches the simulation. Guide section 5: the recorder collects
-# measurements without changing what is measured.
+# Summaries of completed runs and confidence intervals across repeated runs.
+# Aggregation reads results without mutating simulation state.
 
 using Statistics
 
@@ -48,8 +46,7 @@ so a reported P99 is a latency some job actually experienced.
 Any report quoting a percentile has to say which definition it used, or the
 number cannot be reproduced.
 
-`sorted` must already be sorted ascending; `q` must be in `(0, 1]`.
-
+`sorted` must be non-empty and sorted ascending; `q` must be in `(0, 1]`.
 """
 function percentile(sorted::Vector{Float64}, q::Float64)
     if q <= 0.0 || q > 1.0
@@ -61,28 +58,26 @@ end
 """
     summarize(results; warmup_fraction = 0.0) -> Summary
 
-Summarise a run, optionally discarding an initial warm-up.
+Summarise non-empty results in completion order, optionally discarding an
+initial warm-up.
 
 ## Warm-up
 
-A run starts with an empty system, but the system it models never is — it is
-caught mid-flight. Early jobs therefore queue behind almost nothing and report
-waiting times that no steady-state job would see, biasing the average downward.
-Measured against the Pollaczek-Khinchine formula, that bias is a few percent.
+A run starts empty, which can affect estimates intended to describe steady
+state. The size of that effect depends on the workload and run length. In our
+milestone-2 experiment, the apparent shortfall against theory was seed-to-seed
+variation; discarding a warm-up did not close it. See PROGRESS.md.
 
-`warmup_fraction` drops that fraction from the front of `results`, which are in
-completion order. Must be in `[0, 1)`. Guide section 12 requires the discard to
-be documented alongside any result, so whatever value a report uses belongs in
-the report.
+`warmup_fraction` must be in `[0, 1)`. It drops
+`floor(Int, warmup_fraction * length(results))` results from the front.
+`Summary` records the retained and discarded counts.
 
-## Design decision you must make and document here
+## Throughput
 
-`throughput` is completed jobs divided by elapsed simulated time — but elapsed
-from when? From `t = 0` to the last completion, or from the first *retained*
-job's arrival to the last completion? With a warm-up discard the two differ, and
-the first one keeps counting time in which the discarded jobs ran. Pick one and
-say which, here.
-
+`throughput` is the retained job count divided by the time from the first
+retained job's arrival to the last retained completion. The initial gap before
+that arrival is excluded. This window may overlap the service of discarded
+jobs when arrivals queue behind earlier work.
 """
 function summarize(results::Vector{JobResult}; warmup_fraction::Float64 = 0.0)
     if warmup_fraction < 0.0 || warmup_fraction >= 1.0
@@ -128,16 +123,14 @@ end
 # --------------------------------------------------------------------------
 # Repeated runs
 #
-# One run is not a measurement. A single seed at rho = 0.8 lands within a
-# couple of percent of the M/G/1 prediction, and that couple of percent is
-# large enough to look like a real effect and invite an explanation for it.
-# Reporting an interval instead of a point makes that mistake impossible.
+# Repeated seeds estimate how much reported metrics vary between runs.
+# An interval helps distinguish sampling variation from a workload effect.
 # --------------------------------------------------------------------------
 
 # Two-sided 95% Student-t critical values by degrees of freedom. Used instead
 # of the normal 1.96 because run counts here are small: at 5 runs (4 df) the
 # correct multiplier is 2.776, so the normal approximation would understate
-# the interval by 30%.
+# the interval by about 29%.
 const T_CRITICAL_95 = Dict(
     1 => 12.706, 2 => 4.303, 3 => 3.182, 4 => 2.776, 5 => 2.571,
     6 => 2.447, 7 => 2.365, 8 => 2.306, 9 => 2.262, 10 => 2.228,
@@ -151,10 +144,9 @@ const T_CRITICAL_95 = Dict(
     t_critical_95(df) -> Float64
 
 Two-sided 95% Student-t critical value for `df` degrees of freedom, from
-[`T_CRITICAL_95`](@ref), falling back to the normal value 1.96 above 30 df
-where the difference is under 2%.
-
-TODO: implement.
+[`T_CRITICAL_95`](@ref) for 1 through 30 degrees of freedom. Above 30, use
+the normal approximation 1.96, which gives a slightly narrower interval.
+`df` must be positive.
 """
 function t_critical_95(df::Int)
     if df <= 0
@@ -184,7 +176,8 @@ end
 """
     estimate(values) -> Estimate
 
-Mean of `values` with the half-width of its 95% confidence interval:
+Mean of non-empty `values` with the half-width of its approximate 95%
+confidence interval across runs:
 
     halfwidth = t * s / sqrt(n)
 
@@ -195,7 +188,6 @@ A single value has no degrees of freedom and therefore no interval; return a
 half-width of `Inf` rather than pretending to `0.0`, which would claim perfect
 certainty from one observation.
 
-TODO: implement.
 """
 function estimate(values::Vector{Float64})
     num_runs = length(values)
@@ -216,7 +208,6 @@ end
 
 Render as `value ± halfwidth`.
 
-TODO: implement.
 """
 function Base.show(io::IO, ::MIME"text/plain", e::Estimate)
     println(io, round(e.mean, digits=3), " ± ", round(e.halfwidth, digits=3), " (n = ", e.num_runs, ")")
@@ -225,11 +216,11 @@ end
 """
     RepeatedSummary
 
-Results of running one scenario across several seeds. Every reported quantity
-carries its confidence interval.
+Results of running one scenario across several seeds. Reports mean latency,
+P99 latency, mean waiting time and throughput, each with a confidence interval
+for its mean across runs. P50 and P95 remain available in per-run `Summary`.
 
-Records `warmup_fraction` alongside the numbers because guide section 12
-requires the discard used to travel with any result that depends on it.
+Records `warmup_fraction` alongside the numbers so the discard is explicit.
 """
 struct RepeatedSummary
     num_runs::Int
@@ -244,17 +235,15 @@ end
     simulate_repeated(scenario, num_runs; warmup_fraction = 0.0) -> RepeatedSummary
 
 Run `scenario` `num_runs` times under different seeds and summarise the spread.
+This helper currently uses the default single-worker capacity; it does not
+accept the capacity argument supported by `simulate`.
 
-## Design decision you must make and document here
-
-How are the seeds for the individual runs derived from `scenario.seed`?
-Consecutive integers are the obvious choice and make the whole experiment
-reproducible from one number, but consecutive seeds are not independent for
-every generator. Say what you chose, so a reader can reproduce a run exactly.
+Run `i` uses seed `scenario.seed + i - 1` with the same workload parameters.
+Each simulation constructs its own `Xoshiro` RNG, making the experiment
+reproducible from the scenario and run count.
 
 `num_runs` must be at least 2; a single run has no interval to report.
 
-TODO: implement.
 """
 function simulate_repeated(scenario::Scenario, num_runs::Int; warmup_fraction::Float64 = 0.0)
     if num_runs < 2
@@ -286,9 +275,8 @@ end
 """
     show(io, ::MIME"text/plain", r::RepeatedSummary)
 
-Render each quantity with its interval, plus the run count and warm-up used.
-
-TODO: implement.
+Render the run count, warm-up fraction and each `Estimate` using its default
+representation, including its mean, half-width and run count.
 """
 function Base.show(io::IO, ::MIME"text/plain", r::RepeatedSummary)
     println(io, "RepeatedSummary of $(r.num_runs) runs (warmup_fraction = $(r.warmup_fraction)):")

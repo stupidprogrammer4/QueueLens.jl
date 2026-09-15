@@ -1,6 +1,6 @@
 @testset "distributions" begin
 
-    # Local helper so the package needs no Statistics dependency.
+    # Compute the sample mean directly for the distribution checks.
     sample_mean(xs) = sum(xs) / length(xs)
 
     draws(d, seed, n) = (rng = Xoshiro(seed); [sample(rng, d) for _ in 1:n])

@@ -1,23 +1,19 @@
-# A scenario is the complete description of one run: what arrives, how long
+# A scenario describes the workload: what arrives, how long
 # work takes, how much of it there is, and the seed that makes it repeatable.
-#
-# Guide section 12: "configuration, package version, and seed accompany every
-# report". The seed lives here, in the scenario, rather than being a loose
-# argument to simulate, so that a scenario and its results can never drift
-# apart.
+# Keep the seed with the workload configuration so a run can be reproduced.
 
 """
     Scenario(arrivals, service, num_jobs, seed)
 
-Everything needed to run one simulation.
+Workload parameters and seed for one simulation. Worker capacity is supplied
+separately to `simulate` and defaults to one.
 
   - `arrivals` — distribution of the *gap* between consecutive arrivals, not
     of absolute arrival times. `Exponential(rate)` makes arrivals a Poisson
     process at `rate` jobs per unit time.
   - `service`  — distribution of how long the worker is busy with one job.
-  - `num_jobs` — how many jobs to generate before the run winds down. Guide
-    section 6 also allows stopping on elapsed time; that is not implemented
-    yet.
+  - `num_jobs` — how many jobs to generate before the run winds down.
+    Stopping on elapsed time is not implemented yet.
   - `seed`     — seeds the run's RNG. The same scenario always produces the
     same results.
 """

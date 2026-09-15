@@ -52,7 +52,7 @@
         jobs = [Job(1, 0.0, 3.0), Job(2, 1.0, 3.0), Job(3, 2.0, 3.0)]
 
         # Rebuild the state the same way simulate does so the log is reachable.
-        # (Milestone 2 replaces clock_log with a proper Recorder.)
+        # This test populates clock_log; simulate itself does not record it.
         scenario = Scenario(Constant(0.0), Constant(0.0), length(jobs), 0)
         state = QueueLens.SimState(scenario)
         state.jobs_generated = length(jobs)   # no lazy generation on this path

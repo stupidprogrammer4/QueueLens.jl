@@ -12,12 +12,12 @@ using Statistics
 
 Print a text histogram of `samples`.
 
-TODO: implement.
+Use equal-width bins spanning the sample range. Label each row with its bin
+edges and share of all samples; bar length is that share times `width`.
+Identical samples produce a single full-width row.
 
-Suggested approach: pick a bin width from the data range, count how many
-samples fall in each bin, and print one row per bin as
-`repeat("#", round(Int, share * width))`. Label each row with its bin edges
-and its share, so the plot can be read as numbers too.
+The current indexing excludes samples mapped past the last bin, including
+the maximum for an exactly representable upper edge.
 """
 function histogram(samples::Vector{Float64}; bins::Int = 20, width::Int = 50)
     hi = maximum(samples)
@@ -48,7 +48,7 @@ function main()
     rng = Xoshiro(42)
     n = 100_000
 
-    # All three have a mean of 3.0, so any difference in shape is variance.
+    # All four distributions have mean 3.0, with different variances and tails.
     for (name, d) in (
         ("Constant(3.0)",             Constant(3.0)),
         ("Exponential(1/3)",          Exponential(1 / 3)),

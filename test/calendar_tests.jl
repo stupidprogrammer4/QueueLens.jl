@@ -37,8 +37,7 @@
     end
 
     @testset "equal timestamps resolve deterministically" begin
-        # Whatever tie-breaking rule you chose, it must be stable: building the
-        # same calendar twice must produce the same output order every time.
+        # Building the same calendar twice must reproduce the output order.
         build() = begin
             state = calendar_state()
             QueueLens.schedule!(state, QueueLens.ServiceCompleted(3.0, 1))

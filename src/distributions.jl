@@ -1,9 +1,7 @@
 # Workload distributions.
 #
-# Every distribution is sampled through `sample(rng, d)`, and the `rng` is
-# always passed in explicitly — guide section 12: "randomness comes from an
-# explicit RNG, never hidden global state". Calling bare `rand()` anywhere in
-# this package would make runs irreproducible.
+# Every distribution is sampled through `sample(rng, d)`. Passing the RNG
+# explicitly keeps workload draws reproducible from the scenario's seed.
 
 using Random
 
@@ -103,20 +101,18 @@ end
 """
     sample(rng, d::Exponential) -> Float64
 
-Draw one exponential variate by inverse transform sampling.
+Draw one exponential variate using `randexp(rng) / rate`.
 
 Inverting the CDF `F(x) = 1 - exp(-rate * x)` gives `F^-1(u) = -log(1 - u) / rate`,
-which at `rate = 1` is exactly what `randexp` returns; dividing by `rate`
-rescales `Exponential(1)` to `Exponential(rate)`. `randexp` uses the Ziggurat
-algorithm rather than a logarithm, so it draws different numbers from the same
-distribution, roughly twice as fast.
+which at `rate = 1` describes the distribution sampled by `randexp`.
+Dividing by `rate` rescales a unit-rate exponential draw to the requested rate.
+The inverse CDF explains the distribution; sampling is delegated to Random.
 
 Do not hand-roll this as `-log(rand(rng)) / rate`: `rand` can return exactly
 `0.0`, and `log(0.0)` is `-Inf`, which would put an event at infinite time.
 The `1 - u` form avoids that; `randexp` avoids it too.
 """
 function sample(rng::AbstractRNG, d::Exponential)
-    # randexp(rng) ~ -log(1 - u): a draw from Exponential(1).
     return randexp(rng) / d.rate
 end
 
@@ -141,7 +137,6 @@ Draw `n` independent variates from `d`.
 
 Dispatches to the single-draw method, so it works for every distribution
 without a method per type. `n` must be positive.
-
 """
 function sample(rng::AbstractRNG, d::Distribution, n::Int)
     if n <= 0
