@@ -89,12 +89,30 @@ protect:
 | Milestone | Scope | Status |
 |---|---|---|
 | 0 | Julia foundations: package skeleton, deterministic hand-calculated simulation, event-ordering tests | done |
-| 1 | Minimal discrete-event engine: event calendar, FIFO queue, worker capacity, recorder | done |
-| 2 | Probabilistic workloads: arrival/service distributions, seeds, percentiles, confidence intervals | in progress |
-| 3 | Shared resource pools and backpressure: DB pool, bounded queues, admission policies, utilization | planned |
+| 1 | Minimal discrete-event engine: event calendar, FIFO queue, single worker, job results | done |
+| 2 | Probabilistic workloads: arrival/service distributions, seeds, percentiles, confidence intervals | done |
+| 3 | Worker capacity, shared resource pools and backpressure: DB pool, bounded queues, admission policies, utilization | in progress |
 | 4 | Failure, timeout and retry: injection, timeout events, backoff policies, retry amplification | planned |
 | 5 | CLI, TOML configuration, CSV/JSON summaries and plots | planned |
 | 6 | Parameter sweeps and evidence-based bottleneck recommendations | planned |
+
+Current implementation: configurable parallel worker slots with FIFO waiting,
+probabilistic workloads, per-run percentiles and confidence intervals across
+repeated seeds. Milestone 3 has started; shared DB pools and backpressure remain.
+See [PROGRESS.md](PROGRESS.md) for decisions and the next learning exercise.
+
+### Worker capacity
+
+```julia
+jobs = [Job(1, 0.0, 3.0), Job(2, 1.0, 3.0), Job(3, 2.0, 3.0)]
+results = simulate(jobs, 2)
+[r.waiting_time for r in results]  # [0.0, 0.0, 1.0]
+```
+
+Both `simulate(jobs, capacity)` and `simulate(scenario, capacity)` accept a
+positive integer capacity as the second positional argument, defaulting to one.
+Each slot serves one job at a time. `simulate_repeated` currently uses one slot
+and does not yet accept a capacity argument.
 
 ## Non-goals for v0.1
 
@@ -151,19 +169,26 @@ QueueLens/
 │   ├── jobs.jl           # Job, JobRecord, JobResult
 │   ├── events.jl         # SimEvent and its subtypes
 │   ├── state.jl          # SimState, the event calendar
+│   ├── metrics.jl        # summaries, percentiles, repeated-run estimates
 │   └── engine.jl         # handlers and the main loop
 ├── test/
 │   ├── runtests.jl
 │   ├── distribution_tests.jl
 │   ├── calendar_tests.jl
 │   ├── engine_tests.jl
-│   └── scenario_tests.jl
+│   ├── worker_tests.jl
+│   ├── scenario_tests.jl
+│   ├── metric_tests.jl
+│   └── repeated_tests.jl
+├── experiments/
+│   ├── distribution_shapes.jl
+│   └── variance_effect.jl
 └── README.md
 ```
 
 Files are split only when responsibilities become real. Later milestones add
-`resources.jl`, `policies.jl` and `metrics.jl` under `src/`, plus `scenarios/`,
-`experiments/`, `docs/` and `benchmarks/`.
+`resources.jl` and `policies.jl` under `src/`, plus `scenarios/`, `docs/` and
+`benchmarks/`.
 
 ## A note on interpretation
 
