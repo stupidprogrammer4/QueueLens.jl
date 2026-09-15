@@ -30,38 +30,39 @@ smaller `sequence` first.
 This is what makes runs reproducible. A binary heap is not a stable sort, so
 without the `sequence` tiebreaker two events sharing a timestamp could come
 out in either order depending on the heap's internal layout, and two runs of
-the same scenario could diverge — violating guide section 12, "event ordering
-is deterministic for equal timestamps".
+the same scenario could diverge.
 """
 function Base.isless(a::CalendarEntry, b::CalendarEntry)
     return a.time < b.time || (a.time == b.time && a.sequence < b.sequence)
 end
 
 """
-    SimState(scenario, rng = Xoshiro(scenario.seed))
+    SimState(scenario, capacity = 1, rng = Xoshiro(scenario.seed))
 
 Everything that changes as the simulation runs. Mutable by definition.
 
+`capacity` must be positive. All slots start idle (`in_use == 0`).
+
 Parameterised on the RNG type so that `rng` has a concrete type in the hot
-loop. Writing `rng::AbstractRNG` would box every draw; only one RNG type is
-ever used within a run, so there is nothing to gain from that.
+loop. An abstract RNG field would hide the concrete type from inference;
+the type parameter lets methods specialise on the RNG used by the run.
 
 Fields:
 
-  - `rng`            — the run's only source of randomness. Guide section 12:
-                       never call bare `rand()` anywhere.
+  - `rng`            — the run's source of randomness for workload sampling.
   - `scenario`       — the run's description, so handlers can draw the next
                        arrival without threading it through every signature.
   - `now`            — the virtual clock. Only the main loop writes it.
   - `calendar`       — pending events as a min-heap. See [`schedule!`](@ref).
   - `next_sequence`  — stamp for the next entry, giving equal timestamps a
                        deterministic order. Only [`schedule!`](@ref) advances it.
-  - `waiting`        — ids of jobs queued for the worker, in FIFO order.
-  - `busy`           — whether the single worker is currently serving a job.
+  - `waiting`        — ids of jobs queued for worker slots, in FIFO order.
+  - `capacity`       — the maximum number of jobs that can be served simultaneously.
+  - `in_use`         — the number of jobs currently being served.
   - `records`        — in-flight bookkeeping, keyed by job id.
   - `results`        — completed jobs, in completion order.
-  - `clock_log`      — every value `now` has taken, for the monotonicity test.
-                       Milestone 1 only; a proper Recorder replaces this later.
+  - `clock_log`      — clock values appended by the monotonicity test's loop.
+                       Production simulation loops do not populate it.
   - `jobs_generated` — how many arrivals have been created so far. Generation
                        stops once this reaches `scenario.num_jobs`, which is
                        also how `simulate(::Vector{Job})` disables lazy
@@ -78,7 +79,8 @@ mutable struct SimState{R<:AbstractRNG}
     calendar::BinaryMinHeap{CalendarEntry}
     next_sequence::Int
     waiting::Vector{Int}
-    busy::Bool
+    capacity::Int
+    in_use::Int
     records::Dict{Int,JobRecord}
     results::Vector{JobResult}
     clock_log::Vector{Float64}
@@ -86,9 +88,12 @@ mutable struct SimState{R<:AbstractRNG}
     max_calendar_size::Int
 end
 
-function SimState(scenario::Scenario, rng::R = Xoshiro(scenario.seed)) where {R<:AbstractRNG}
+function SimState(scenario::Scenario, capacity::Int = 1, rng::R = Xoshiro(scenario.seed)) where {R<:AbstractRNG}
+    if capacity <= 0
+        throw(ArgumentError("capacity must be positive"))
+    end
     return SimState{R}(rng, scenario, 0.0, BinaryMinHeap{CalendarEntry}(), 0,
-                       Int[], false, Dict{Int,JobRecord}(), JobResult[], Float64[], 0, 0)
+                       Int[], capacity, 0, Dict{Int,JobRecord}(), JobResult[], Float64[], 0, 0)
 end
 
 """
@@ -101,9 +106,8 @@ monotonically increasing `sequence`, and [`isless`](@ref) compares
 `(time, sequence)`. Two runs with identical inputs therefore always pop
 events in the same order.
 
-Invariant (guide section 12: virtual time is monotonic) — scheduling an event
-earlier than `state.now` is a bug in the caller, not a situation to handle.
-Throws `ArgumentError`.
+Scheduling an event earlier than `state.now` throws `ArgumentError` to protect
+the monotonic virtual clock.
 
 Also rejects an infinite `time`. Some discrete-event simulators use `Inf` as a
 "never happens" sentinel; this one does not, so an infinite timestamp can only

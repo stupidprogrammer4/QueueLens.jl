@@ -30,7 +30,7 @@ end
 """
     ServiceCompleted(time, job_id)
 
-The worker finishes serving `job_id` at `time`, and becomes free.
+A worker finishes serving `job_id` at `time`, releasing one service slot.
 """
 struct ServiceCompleted <: SimEvent
     time::Float64
