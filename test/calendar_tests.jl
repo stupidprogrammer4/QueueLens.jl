@@ -4,7 +4,7 @@
 @testset "event calendar" begin
 
     # The calendar does not depend on the scenario; any valid one will do.
-    calendar_state() = QueueLens.SimState(Scenario(Constant(1.0), Constant(1.0), 1, 0))
+    calendar_state() = QueueLens.SimState(Scenario(Constant(1.0), Constant(1.0), 1, 0), Dict{Symbol,Int}())
 
     @testset "events come out in time order regardless of insertion order" begin
         state = calendar_state()
@@ -24,8 +24,11 @@
 
         QueueLens.schedule!(state, QueueLens.ServiceCompleted(4.0, 1))
         QueueLens.schedule!(state, QueueLens.JobArrival(2.0, 2))
+        step = QueueLens.StepCompleted(3.0, 7, 2)
+        QueueLens.schedule!(state, step)
 
         @test QueueLens.pop_next!(state) isa QueueLens.JobArrival
+        @test QueueLens.pop_next!(state) === step
         @test QueueLens.pop_next!(state) isa QueueLens.ServiceCompleted
     end
 
@@ -47,6 +50,22 @@
         end
 
         @test build() == build()
+    end
+
+    @testset "step completions preserve insertion order at equal times" begin
+        state = calendar_state()
+        first_step = QueueLens.StepCompleted(3.0, 7, 1)
+        arrival = QueueLens.JobArrival(3.0, 8)
+        earlier_step = QueueLens.StepCompleted(1.0, 9, 2)
+        completion = QueueLens.ServiceCompleted(3.0, 10)
+        last_step = QueueLens.StepCompleted(3.0, 11, 3)
+        for event in (first_step, arrival, earlier_step, completion, last_step)
+            QueueLens.schedule!(state, event)
+        end
+
+        @test [QueueLens.pop_next!(state) for _ in 1:5] ==
+              [earlier_step, first_step, arrival, completion, last_step]
+        @test isempty(state.calendar)
     end
 
 end

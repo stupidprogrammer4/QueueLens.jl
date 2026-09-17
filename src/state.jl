@@ -18,6 +18,7 @@ struct CalendarEntry
     event::SimEvent
 end
 
+# Derive the calendar timestamp from the event so the two cannot disagree.
 CalendarEntry(event::SimEvent, sequence::Int) = CalendarEntry(event.time, sequence, event)
 
 
@@ -37,11 +38,18 @@ function Base.isless(a::CalendarEntry, b::CalendarEntry)
 end
 
 """
-    SimState(scenario, capacity = 1, rng = Xoshiro(scenario.seed))
+    SimState(scenario, resources, capacity = 1, rng = Xoshiro(scenario.seed);
+             queue_capacity = typemax(Int))
 
 Everything that changes as the simulation runs. Mutable by definition.
 
 `capacity` must be positive. All slots start idle (`in_use == 0`).
+`resources` is a required `Dict{Symbol,Int}` of pool capacities. Pass an empty
+dictionary for no shared resources. Each state creates fresh pools and queues;
+the caller's configuration is not mutated or retained.
+`queue_capacity` is a nonnegative limit for the worker waiting queue; the
+default integer maximum is effectively unbounded. It does not limit resource
+queues. The arrival handler enforces this limit through `can_admit`.
 
 Parameterised on the RNG type so that `rng` has a concrete type in the hot
 loop. An abstract RNG field would hide the concrete type from inference;
@@ -57,10 +65,19 @@ Fields:
   - `next_sequence`  — stamp for the next entry, giving equal timestamps a
                        deterministic order. Only [`schedule!`](@ref) advances it.
   - `waiting`        — ids of jobs queued for worker slots, in FIFO order.
+  - `queue_capacity` - maximum number of jobs waiting for worker slots.
+  - `resources`      - shared resource pools keyed by name; initially idle.
+  - `resource_waiting` - an initially empty FIFO job-id queue for each resource.
   - `capacity`       — the maximum number of jobs that can be served simultaneously.
   - `in_use`         — the number of jobs currently being served.
+  - `queue_length_stat` - worker queue length sampled after each handled event.
+  - `worker_busy_stat` - time-weighted occupied worker count, including resource
+                         waits; sampled after events. Not a utilization fraction.
+  - `res_queue_stat` - independent time-weighted waiting count for each resource.
+  - `res_busy_stat` - independent time-weighted occupied slot count per resource.
   - `records`        — in-flight bookkeeping, keyed by job id.
   - `results`        — completed jobs, in completion order.
+  - `rejected`       - rejected jobs, in rejection order, separate from results.
   - `clock_log`      — clock values appended by the monotonicity test's loop.
                        Production simulation loops do not populate it.
   - `jobs_generated` — how many arrivals have been created so far. Generation
@@ -79,21 +96,104 @@ mutable struct SimState{R<:AbstractRNG}
     calendar::BinaryMinHeap{CalendarEntry}
     next_sequence::Int
     waiting::Vector{Int}
+    queue_capacity::Int
+    resources::Dict{Symbol,ResourcePool}
+    resource_waiting::Dict{Symbol,Vector{Int}}
     capacity::Int
     in_use::Int
+    queue_length_stat::TimeWeightedStat
+    worker_busy_stat::TimeWeightedStat
+    res_queue_stat::Dict{Symbol,TimeWeightedStat}
+    res_busy_stat::Dict{Symbol,TimeWeightedStat}
     records::Dict{Int,JobRecord}
     results::Vector{JobResult}
+    rejected::Vector{JobRejection}
     clock_log::Vector{Float64}
     jobs_generated::Int
     max_calendar_size::Int
 end
 
-function SimState(scenario::Scenario, capacity::Int = 1, rng::R = Xoshiro(scenario.seed)) where {R<:AbstractRNG}
+"""
+    SimState(scenario, resources, capacity = 1, rng = Xoshiro(scenario.seed);
+             queue_capacity = typemax(Int))
+
+Build an idle run with an empty event calendar. Register fresh pools and FIFO
+queues from the required resource-capacity dictionary. Non-positive worker
+or pool capacities, or a negative queue capacity, throw `ArgumentError`.
+
+An explicitly supplied RNG is stored as-is; otherwise create one from the
+scenario seed. Arrival scheduling belongs to the simulation entry points.
+"""
+function SimState(
+    scenario::Scenario,
+    resources::Dict{Symbol,Int},
+    capacity::Int = 1,
+    rng::R = Xoshiro(scenario.seed);
+    queue_capacity::Int = typemax(Int),
+) where {R<:AbstractRNG}
     if capacity <= 0
         throw(ArgumentError("capacity must be positive"))
     end
-    return SimState{R}(rng, scenario, 0.0, BinaryMinHeap{CalendarEntry}(), 0,
-                       Int[], capacity, 0, Dict{Int,JobRecord}(), JobResult[], Float64[], 0, 0)
+    if queue_capacity < 0
+        throw(ArgumentError("queue_capacity must be non-negative"))
+    end
+    state = SimState{R}(
+        rng, scenario, 0.0, BinaryMinHeap{CalendarEntry}(), 0,
+        Int[], queue_capacity, Dict{Symbol,ResourcePool}(), Dict{Symbol,Vector{Int}}(),
+        capacity, 0, TimeWeightedStat(), TimeWeightedStat(), Dict{Symbol,TimeWeightedStat}(),
+        Dict{Symbol,TimeWeightedStat}(), Dict{Int,JobRecord}(), JobResult[], JobRejection[], Float64[], 0, 0
+    )
+    for (name, pool_capacity) in resources
+        register_resource!(state, name, pool_capacity)
+    end
+    return state
+end
+
+
+"""
+    register_resource!(state, name, capacity) -> Nothing
+
+Register an idle resource pool, its empty FIFO waiting queue and fresh
+queue-length and occupancy accumulators starting at time zero.
+Duplicate names or non-positive capacity throw `ArgumentError` without
+changing existing pools or queues. This does not acquire a resource slot.
+"""
+function register_resource!(state::SimState, name::Symbol, capacity::Int)
+    if haskey(state.resources, name)
+        throw(ArgumentError("resource $(name) already registered"))
+    end
+    state.resources[name] = ResourcePool(capacity)
+    state.resource_waiting[name] = Int[]
+    state.res_queue_stat[name] = TimeWeightedStat()
+    state.res_busy_stat[name] = TimeWeightedStat()
+    return nothing
+end
+
+"""
+    record_rejection!(state, job_id) -> Nothing
+
+Record a `:queue_full` rejection at `state.now` and remove the job's active
+record. The caller decides admission before enqueueing or starting the job.
+Unknown, already queued, started, or not-yet-arrived jobs throw `ArgumentError`
+without changing state. Repeating a rejection fails because its record is gone.
+
+This bookkeeping helper does not release workers, modify queues, or schedule
+events. The arrival handler must still schedule the next arrival.
+"""
+function record_rejection!(state::SimState, job_id::Int)
+    if !haskey(state.records, job_id)
+        throw(ArgumentError("cannot reject unknown job id $job_id"))
+    end
+    record = state.records[job_id]
+    if !isnan(record.start_time) || job_id in state.waiting
+        throw(ArgumentError("cannot reject already admitted job id $job_id"))
+    end
+    if state.now < record.arrival_time
+        throw(ArgumentError("cannot reject job id $job_id before its arrival"))
+    end
+    push!(state.rejected, JobRejection(job_id, record.arrival_time, state.now, :queue_full))
+    delete!(state.records, job_id)
+    return nothing
 end
 
 """

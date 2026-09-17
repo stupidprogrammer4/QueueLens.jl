@@ -8,19 +8,19 @@
     @testset "the same seed reproduces the same run" begin
         s = Scenario(Exponential(0.5), LogNormal(1.1, 0.6), 200, 42)
 
-        @test simulate(s) == simulate(s)
+        @test simulate(s, Dict{Symbol,Int}()).completed == simulate(s, Dict{Symbol,Int}()).completed
     end
 
     @testset "different seeds diverge" begin
         a = Scenario(Exponential(0.5), LogNormal(1.1, 0.6), 200, 42)
         b = Scenario(Exponential(0.5), LogNormal(1.1, 0.6), 200, 43)
 
-        @test simulate(a) != simulate(b)
+        @test simulate(a, Dict{Symbol,Int}()).completed != simulate(b, Dict{Symbol,Int}()).completed
     end
 
     @testset "every job gets exactly one result" begin
         s = Scenario(Exponential(0.5), LogNormal(1.1, 0.6), 300, 7)
-        results = simulate(s)
+        results = simulate(s, Dict{Symbol,Int}()).completed
 
         @test length(results) == 300
         @test length(unique(r.id for r in results)) == 300
@@ -29,7 +29,7 @@
     @testset "result invariants hold under random workloads" begin
         s = Scenario(Exponential(0.8), LogNormal(0.5, 0.9), 500, 11)
 
-        for r in simulate(s)
+        for r in simulate(s, Dict{Symbol,Int}()).completed
             @test r.arrival_time <= r.start_time <= r.completion_time
             @test r.waiting_time ≈ r.start_time - r.arrival_time
             @test r.latency ≈ r.completion_time - r.arrival_time
@@ -43,7 +43,7 @@
         # These assertions check gaps and durations, not the absolute time of
         # the first arrival. The current implementation starts at t = 2.0.
         s = Scenario(Constant(2.0), Constant(3.0), 3, 1)
-        r = simulate(s)
+        r = simulate(s, Dict{Symbol,Int}()).completed
 
         @test r[2].arrival_time - r[1].arrival_time ≈ 2.0
         @test r[3].arrival_time - r[2].arrival_time ≈ 2.0
@@ -58,7 +58,7 @@
         # Drive the loop directly to inspect the calendar's high-water mark:
         # at most one pending arrival and one service completion.
         s = Scenario(Exponential(0.5), Constant(1.0), 500, 3)
-        state = QueueLens.SimState(s)
+        state = QueueLens.SimState(s, Dict{Symbol,Int}())
 
         QueueLens.schedule_next_arrival!(state)
         while !isempty(state.calendar)

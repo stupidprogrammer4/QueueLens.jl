@@ -10,11 +10,11 @@ using QueueLens
 
 const RATE     = 8.0    # arrivals per second
 const MEAN_SVC = 0.1    # seconds
-const NUM_JOBS = 50_000
-const SEED     = 42
-const WARMUP   = 0.1
+const NUM_JOBS = 50_000 # workload size for each service distribution
+const SEED     = 42    # reproducible single-run comparison
+const WARMUP   = 0.1   # fraction of completed jobs discarded for warm summaries
 
-const RHO = RATE * MEAN_SVC
+const RHO = RATE * MEAN_SVC # offered load for the single-worker experiment
 
 """
     pk_mean_wait(cv2)
@@ -29,6 +29,12 @@ distribution with this mean can produce. Everything above it is variance.
 """
 pk_mean_wait(cv2) = RHO * MEAN_SVC * (1 + cv2) / (2 * (1 - RHO))
 
+"""
+    lognormal_with_mean(mean, sigma)
+
+Convert a positive arithmetic mean and log-space standard deviation to the
+parameters accepted by `LogNormal`, using `mu = log(mean) - sigma^2 / 2`.
+"""
 lognormal_with_mean(mean, sigma) = LogNormal(log(mean) - sigma^2 / 2, sigma)
 
 # For a log-normal, C^2 = exp(sigma^2) - 1.
@@ -38,6 +44,13 @@ cases = [
     ("LogNormal s=1.0", lognormal_with_mean(MEAN_SVC, 1.0),      exp(1.0^2) - 1),
 ]
 
+"""
+    main()
+
+Run each service distribution with the same arrival model and seed. Print
+theoretical mean waiting time, raw and warm-up-adjusted simulated waiting,
+and warm-up-adjusted P99 latency to compare the effect of service variance.
+"""
 function main()
     println("arrivals = Exponential($RATE)   mean service = $(MEAN_SVC)s   rho = $RHO")
     println("$NUM_JOBS jobs, seed $SEED, warm-up discard = $(round(Int, WARMUP * 100))%")
@@ -47,7 +60,7 @@ function main()
     println("-"^62)
 
     for (name, service, cv2) in cases
-        results = simulate(Scenario(Exponential(RATE), service, NUM_JOBS, SEED))
+        results = simulate(Scenario(Exponential(RATE), service, NUM_JOBS, SEED), Dict{Symbol,Int}())
         raw  = summarize(results)
         warm = summarize(results; warmup_fraction = WARMUP)
 

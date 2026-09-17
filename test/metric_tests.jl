@@ -4,6 +4,7 @@
     # So latencies are 1.0 .. n, waiting times are all zero, and the last
     # completion is at time n.
     fake(i) = JobResult(i, 0.0, 0.0, Float64(i), 0.0, Float64(i))
+    # Build completion-ordered results with known latencies for percentile checks.
     fakes(n) = [fake(i) for i in 1:n]
 
     @testset "percentile uses the nearest-rank definition" begin
@@ -73,13 +74,30 @@
     @testset "summarize matches a hand-calculated constant run" begin
         # Gaps of 2.0, service 3.0, three jobs: waiting 0, 1, 2 and
         # latencies 3, 4, 5, as pinned in the scenario tests.
-        s = summarize(simulate(Scenario(Constant(2.0), Constant(3.0), 3, 1)))
+        s = summarize(simulate(Scenario(Constant(2.0), Constant(3.0), 3, 1), Dict{Symbol,Int}()))
 
         @test s.num_completed == 3
         @test s.mean_latency ≈ 4.0
         @test s.mean_waiting ≈ 1.0
         @test s.p50_latency ≈ 4.0
         @test s.p99_latency ≈ 5.0
+    end
+
+    @testset "rejected fraction ($completed_count completed, $rejected_count rejected)" for (completed_count, rejected_count, expected) in (
+        (0, 0, 0.0), (3, 0, 0.0), (0, 3, 1.0), (3, 1, 0.25), (2, 1, 1 / 3),
+    )
+        completed = fakes(completed_count)
+        rejected = [JobRejection(completed_count + i, 0.0, 0.0, :queue_full) for i in 1:rejected_count]
+        result = SimulationResult(completed, rejected)
+        completed_before = copy(completed)
+        rejected_before = copy(rejected)
+
+        @test rejection_rate(result) === expected
+        @test 0.0 <= rejection_rate(result) <= 1.0
+        @test result.completed === completed
+        @test result.rejected === rejected
+        @test result.completed == completed_before
+        @test result.rejected == rejected_before
     end
 
     @testset "Summary prints readably" begin

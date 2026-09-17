@@ -4,6 +4,30 @@
 using Statistics
 
 """
+    summarize_monitoring(state::SimState) -> MonitoringSummary
+
+Snapshot an already-observed state using the learner's time-weighted mean and
+utilization helpers. Called at the end of simulation, after the final sample.
+Does not update observations or retain mutable pools, queues or accumulators.
+Each call builds a fresh resource dictionary.
+"""
+function summarize_monitoring(state::SimState)
+    resources = Dict{Symbol,ResourceSummary}()
+    for (name, pool) in state.resources
+        resources[name] = ResourceSummary(
+            pool.capacity,
+            time_weighted_mean(state.res_queue_stat[name]),
+            utilization(state.res_busy_stat[name], pool.capacity),
+        )
+    end
+    return MonitoringSummary(
+        state.now, state.capacity,
+        time_weighted_mean(state.queue_length_stat),
+        utilization(state.worker_busy_stat, state.capacity), resources,
+    )
+end
+
+"""
     Summary
 
 Aggregate view of one run's results.
@@ -56,7 +80,7 @@ function percentile(sorted::Vector{Float64}, q::Float64)
 end
 
 """
-    summarize(results; warmup_fraction = 0.0) -> Summary
+    summarize(results::Vector{JobResult}; warmup_fraction = 0.0) -> Summary
 
 Summarise non-empty results in completion order, optionally discarding an
 initial warm-up.
@@ -95,6 +119,23 @@ function summarize(results::Vector{JobResult}; warmup_fraction::Float64 = 0.0)
     p99_latency = percentile(sorted_latencies, 0.99)
     mean_waiting = mean(r.waiting_time for r in retained_results)
     return Summary(num_completed, num_discarded, throughput, mean_latency, p50_latency, p95_latency, p99_latency, mean_waiting)
+end
+
+"""
+    summarize(result::SimulationResult; warmup_fraction = 0.0) -> Summary
+
+Summarise completed jobs only, using the same completion-order warm-up rule
+as the vector overload. Rejections remain available in `result.rejected` and
+are never interpreted as zero-latency completions or discarded by warm-up.
+Throw `ArgumentError` when there are no completed jobs to summarise.
+Full-run time-weighted statistics remain in `result.monitoring`, unaffected
+by this completion-based warm-up discard.
+"""
+function summarize(result::SimulationResult; warmup_fraction::Float64 = 0.0)
+    if isempty(result.completed)
+        throw(ArgumentError("cannot summarize a run with no completed jobs"))
+    end
+    return summarize(result.completed; warmup_fraction)
 end
 
 """
@@ -221,6 +262,14 @@ P99 latency, mean waiting time and throughput, each with a confidence interval
 for its mean across runs. P50 and P95 remain available in per-run `Summary`.
 
 Records `warmup_fraction` alongside the numbers so the discard is explicit.
+`num_rejected` estimates the full-run rejected-job count across seeds, without
+the completion-based warm-up discard used for latency and throughput.
+`rejection_rate` estimates the full-run fraction of jobs rejected, not a
+count per unit time or a percentage.
+`mean_queue_length`, `worker_utilization`, `resource_mean_queue_length` and
+`resource_utilization` estimate full-run time-weighted metrics across seeds.
+Resource dictionaries include unused configured pools with zero estimates.
+These metrics are not trimmed by the completion-based warm-up fraction.
 """
 struct RepeatedSummary
     num_runs::Int
@@ -229,23 +278,42 @@ struct RepeatedSummary
     latency_p99::Estimate
     waiting_mean::Estimate
     throughput::Estimate
+    num_rejected::Estimate
+    rejection_rate::Estimate
+    mean_queue_length::Estimate
+    worker_utilization::Estimate
+    resource_mean_queue_length::Dict{Symbol,Estimate}
+    resource_utilization::Dict{Symbol,Estimate}
 end
 
 """
-    simulate_repeated(scenario, num_runs; warmup_fraction = 0.0) -> RepeatedSummary
+    simulate_repeated(scenario, resources, num_runs, capacity = 1;
+                      queue_capacity = typemax(Int), warmup_fraction = 0.0) -> RepeatedSummary
 
 Run `scenario` `num_runs` times under different seeds and summarise the spread.
-This helper currently uses the default single-worker capacity; it does not
-accept the capacity argument supported by `simulate`.
+Each run uses the required resource-capacity dictionary to create fresh pools
+and queues. Worker capacity is the fourth positional argument and defaults to one.
+`queue_capacity` is forwarded to every run. Rejections are reported separately
+in `num_rejected` and `rejection_rate`; latency, waiting and throughput estimates
+describe only completed jobs. Rejection estimates do not discard warm-up jobs.
+Queue and utilization estimates also cover each full run from time zero,
+averaging per-run metrics with equal weight rather than pooling run durations.
 
 Run `i` uses seed `scenario.seed + i - 1` with the same workload parameters.
 Each simulation constructs its own `Xoshiro` RNG, making the experiment
-reproducible from the scenario and run count.
+reproducible from the scenario, resources, run count, capacities and warm-up fraction.
 
 `num_runs` must be at least 2; a single run has no interval to report.
 
 """
-function simulate_repeated(scenario::Scenario, num_runs::Int; warmup_fraction::Float64 = 0.0)
+function simulate_repeated(
+    scenario::Scenario,
+    resources::Dict{Symbol,Int},
+    num_runs::Int,
+    capacity::Int = 1;
+    queue_capacity::Int = typemax(Int),
+    warmup_fraction::Float64 = 0.0
+)
     if num_runs < 2
         throw(ArgumentError("num_runs must be at least 2, got $num_runs"))
     end
@@ -253,14 +321,29 @@ function simulate_repeated(scenario::Scenario, num_runs::Int; warmup_fraction::F
     latency_p99s = Vector{Float64}()
     waiting_means = Vector{Float64}()
     throughputs = Vector{Float64}()
+    rejection_counts = Vector{Float64}()
+    rejection_rates = Vector{Float64}()
+    queue_means = Float64[]
+    worker_utilizations = Float64[]
+    resource_queue_means = Dict(name => Float64[] for name in keys(resources))
+    resource_utilizations = Dict(name => Float64[] for name in keys(resources))
     for i in 1:num_runs
         run_scenario = Scenario(scenario.arrivals, scenario.service, scenario.num_jobs, scenario.seed + i - 1)
-        results = simulate(run_scenario)
+        results = simulate(run_scenario, resources, capacity; queue_capacity)
         summary = summarize(results; warmup_fraction=warmup_fraction)
         push!(latency_means, summary.mean_latency)
         push!(latency_p99s, summary.p99_latency)
         push!(waiting_means, summary.mean_waiting)
         push!(throughputs, summary.throughput)
+        push!(rejection_counts, length(results.rejected))
+        push!(rejection_rates, rejection_rate(results))
+        monitoring = results.monitoring::MonitoringSummary
+        push!(queue_means, monitoring.mean_queue_length)
+        push!(worker_utilizations, monitoring.worker_utilization)
+        for (name, resource) in monitoring.resources
+            push!(resource_queue_means[name], resource.mean_queue_length)
+            push!(resource_utilizations[name], resource.utilization)
+        end
     end
     return RepeatedSummary(
         num_runs,
@@ -269,7 +352,31 @@ function simulate_repeated(scenario::Scenario, num_runs::Int; warmup_fraction::F
         estimate(latency_p99s),
         estimate(waiting_means),
         estimate(throughputs),
+        estimate(rejection_counts),
+        estimate(rejection_rates),
+        estimate(queue_means),
+        estimate(worker_utilizations),
+        Dict(name => estimate(values) for (name, values) in resource_queue_means),
+        Dict(name => estimate(values) for (name, values) in resource_utilizations),
     )
+end
+
+
+"""
+    rejection_rate(result::SimulationResult) -> Float64
+
+Return rejected jobs divided by all completed and rejected jobs. The result
+is a fraction in [0, 1], not a percentage or a count per unit time. An empty
+report returns `0.0` by convention. This does not mutate the report and always
+uses the full run, independent of completion-based warm-up in `summarize`.
+"""
+function rejection_rate(result::SimulationResult)
+    total_jobs = length(result.completed) + length(result.rejected)
+    rate = 0.0
+    if total_jobs !== 0
+        rate = length(result.rejected) / total_jobs
+    end
+    return rate
 end
 
 """
@@ -284,4 +391,12 @@ function Base.show(io::IO, ::MIME"text/plain", r::RepeatedSummary)
     println(io, "  latency_p99: ", r.latency_p99)
     println(io, "  waiting_mean: ", r.waiting_mean)
     println(io, "  throughput: ", r.throughput)
+    println(io, "  num_rejected (full run): ", r.num_rejected)
+    println(io, "  rejection_rate (full run): ", r.rejection_rate)
+    println(io, "  mean_queue_length (full run): ", r.mean_queue_length)
+    println(io, "  worker_utilization (full run): ", r.worker_utilization)
+    for name in sort!(collect(keys(r.resource_mean_queue_length)))
+        println(io, "  resource ", name, " mean_queue_length (full run): ", r.resource_mean_queue_length[name])
+        println(io, "  resource ", name, " utilization (full run): ", r.resource_utilization[name])
+    end
 end

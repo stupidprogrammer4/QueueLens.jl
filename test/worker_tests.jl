@@ -2,12 +2,12 @@
 
     @testset "state defaults and explicit RNG" begin
         scenario = Scenario(Constant(1.0), Constant(3.0), 3, 42)
-        state = QueueLens.SimState(scenario)
+        state = QueueLens.SimState(scenario, Dict{Symbol,Int}())
         @test state.capacity == 1
         @test state.in_use == 0
 
         rng = Xoshiro(7)
-        state = QueueLens.SimState(scenario, 2, rng)
+        state = QueueLens.SimState(scenario, Dict{Symbol,Int}(), 2, rng)
         @test state.capacity == 2
         @test state.in_use == 0
         @test state.rng === rng
@@ -18,16 +18,16 @@
         jobs = [Job(1, 0.0, 1.0)]
         scenario = Scenario(Constant(1.0), Constant(1.0), 1, 42)
         for capacity in (0, -1)
-            @test_throws ArgumentError QueueLens.SimState(scenario, capacity)
-            @test_throws ArgumentError simulate(jobs, capacity)
-            @test_throws ArgumentError simulate(scenario, capacity)
+            @test_throws ArgumentError QueueLens.SimState(scenario, Dict{Symbol,Int}(), capacity)
+            @test_throws ArgumentError simulate(jobs, Dict{Symbol,Int}(), capacity)
+            @test_throws ArgumentError simulate(scenario, Dict{Symbol,Int}(), capacity)
         end
     end
 
     @testset "two workers match the hand-calculated table" begin
         jobs = [Job(1, 0.0, 3.0), Job(2, 1.0, 3.0), Job(3, 2.0, 3.0)]
-        @test simulate(jobs) == simulate(jobs, 1)
-        @test simulate(jobs, 2) == [
+        @test simulate(jobs, Dict{Symbol,Int}()).completed == simulate(jobs, Dict{Symbol,Int}(), 1).completed
+        @test simulate(jobs, Dict{Symbol,Int}(), 2).completed == [
             JobResult(1, 0.0, 0.0, 3.0, 0.0, 3.0),
             JobResult(2, 1.0, 1.0, 4.0, 0.0, 3.0),
             JobResult(3, 2.0, 3.0, 6.0, 1.0, 4.0),
@@ -38,7 +38,7 @@
         # Job 1 occupies one worker until time 5; the other serves jobs 2-4.
         jobs = [Job(1, 0.0, 5.0), Job(2, 0.0, 1.0),
                 Job(3, 0.0, 2.0), Job(4, 0.0, 1.0)]
-        @test simulate(jobs, 2) == [
+        @test simulate(jobs, Dict{Symbol,Int}(), 2).completed == [
             JobResult(2, 0.0, 0.0, 1.0, 0.0, 1.0),
             JobResult(3, 0.0, 1.0, 3.0, 1.0, 3.0),
             JobResult(4, 0.0, 3.0, 4.0, 3.0, 4.0),
@@ -48,37 +48,37 @@
 
     @testset "simultaneous completions refill all freed slots" begin
         jobs = [Job(i, 0.0, 2.0) for i in 1:6]
-        results = simulate(jobs, 2)
+        results = simulate(jobs, Dict{Symbol,Int}(), 2).completed
         @test [r.id for r in results] == collect(1:6)
         @test [r.start_time for r in results] == [0.0, 0.0, 2.0, 2.0, 4.0, 4.0]
         @test [r.completion_time for r in results] == [2.0, 2.0, 4.0, 4.0, 6.0, 6.0]
-        @test simulate(jobs, 2) == results
+        @test simulate(jobs, Dict{Symbol,Int}(), 2).completed == results
 
-        @test all(r -> r.waiting_time == 0.0, simulate(jobs, 8))
+        @test all(r -> r.waiting_time == 0.0, simulate(jobs, Dict{Symbol,Int}(), 8).completed)
     end
 
     @testset "zero-duration jobs drain at the same timestamp" begin
         jobs = [Job(i, 0.0, 0.0) for i in 1:5]
-        @test simulate(jobs, 2) == [JobResult(i, 0.0, 0.0, 0.0, 0.0, 0.0) for i in 1:5]
+        @test simulate(jobs, Dict{Symbol,Int}(), 2).completed == [JobResult(i, 0.0, 0.0, 0.0, 0.0, 0.0) for i in 1:5]
     end
 
     @testset "scenario runs forward capacity" begin
         scenario = Scenario(Constant(1.0), Constant(3.0), 3, 42)
-        @test simulate(scenario) == simulate(scenario, 1)
-        @test simulate(scenario, 2) == [
+        @test simulate(scenario, Dict{Symbol,Int}()).completed == simulate(scenario, Dict{Symbol,Int}(), 1).completed
+        @test simulate(scenario, Dict{Symbol,Int}(), 2).completed == [
             JobResult(1, 1.0, 1.0, 4.0, 0.0, 3.0),
             JobResult(2, 2.0, 2.0, 5.0, 0.0, 3.0),
             JobResult(3, 3.0, 4.0, 7.0, 1.0, 4.0),
         ]
 
         random_scenario = Scenario(Exponential(10.0), LogNormal(-0.5, 1.0), 50, 42)
-        @test simulate(random_scenario, 3) == simulate(random_scenario, 3)
+        @test simulate(random_scenario, Dict{Symbol,Int}(), 3).completed == simulate(random_scenario, Dict{Symbol,Int}(), 3).completed
     end
 
     @testset "resource and calendar invariants after every event" begin
         scenario = Scenario(Exponential(10.0), LogNormal(-0.5, 1.0), 50, 42)
         for capacity in (1, 2, 4)
-            state = QueueLens.SimState(scenario, capacity)
+            state = QueueLens.SimState(scenario, Dict{Symbol,Int}(), capacity)
             QueueLens.schedule_next_arrival!(state)
             while !isempty(state.calendar)
                 event = QueueLens.pop_next!(state)

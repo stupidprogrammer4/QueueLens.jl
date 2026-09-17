@@ -4,7 +4,7 @@
         # Hand-calculated reference case:
         #   arrivals at 0, 1, 2 with a service time of 3 on a single worker.
         jobs = [Job(1, 0.0, 3.0), Job(2, 1.0, 3.0), Job(3, 2.0, 3.0)]
-        results = simulate(jobs)
+        results = simulate(jobs, Dict{Symbol,Int}()).completed
 
         @test length(results) == 3
 
@@ -15,7 +15,7 @@
 
     @testset "arrival order does not depend on input order" begin
         shuffled = [Job(3, 2.0, 3.0), Job(1, 0.0, 3.0), Job(2, 1.0, 3.0)]
-        results = simulate(shuffled)
+        results = simulate(shuffled, Dict{Symbol,Int}()).completed
 
         @test [r.id for r in results] == [1, 2, 3]
     end
@@ -23,13 +23,13 @@
     @testset "identical inputs produce identical results" begin
         jobs = [Job(i, Float64(i), 3.0) for i in 1:5]
 
-        @test simulate(jobs) == simulate(jobs)
+        @test simulate(jobs, Dict{Symbol,Int}()).completed == simulate(jobs, Dict{Symbol,Int}()).completed
     end
 
     @testset "an idle worker starts a job immediately" begin
         # Arrivals spaced further apart than the service time: nobody ever waits.
         jobs = [Job(1, 0.0, 3.0), Job(2, 10.0, 3.0), Job(3, 20.0, 3.0)]
-        results = simulate(jobs)
+        results = simulate(jobs, Dict{Symbol,Int}()).completed
 
         @test all(r -> r.waiting_time == 0.0, results)
         @test all(r -> r.start_time == r.arrival_time, results)
@@ -41,7 +41,7 @@
         #   j2: waits until 3, completes 4
         #   j3: waits until 4, completes 8
         jobs = [Job(1, 0.0, 3.0), Job(2, 1.0, 1.0), Job(3, 2.0, 4.0)]
-        results = simulate(jobs)
+        results = simulate(jobs, Dict{Symbol,Int}()).completed
 
         @test results[1] == JobResult(1, 0.0, 0.0, 3.0, 0.0, 3.0)
         @test results[2] == JobResult(2, 1.0, 3.0, 4.0, 2.0, 3.0)
@@ -54,7 +54,7 @@
         # Rebuild the state the same way simulate does so the log is reachable.
         # This test populates clock_log; simulate itself does not record it.
         scenario = Scenario(Constant(0.0), Constant(0.0), length(jobs), 0)
-        state = QueueLens.SimState(scenario)
+        state = QueueLens.SimState(scenario, Dict{Symbol,Int}())
         state.jobs_generated = length(jobs)   # no lazy generation on this path
         for job in jobs
             QueueLens.schedule!(state, QueueLens.JobArrival(job.arrival_time, job.id))
@@ -72,7 +72,7 @@
 
     @testset "result invariants hold for every job" begin
         jobs = [Job(i, Float64(i), 3.0) for i in 1:20]
-        results = simulate(jobs)
+        results = simulate(jobs, Dict{Symbol,Int}()).completed
 
         @test length(results) == 20
         for r in results
