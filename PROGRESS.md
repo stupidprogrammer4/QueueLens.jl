@@ -15,9 +15,23 @@ is still open. Kept per section 14 of the project guide.
 | 5 | CLI, configuration and plots | not started |
 | 6 | Parameter sweep and recommendation | not started |
 
-Test suite: 2910 passing, 0 failing, 0 errors (`julia --project=. -e 'using Pkg; Pkg.test()'`).
-Pkg still warns that the manifest was last resolved against different project
-dependencies or compatibility settings; this did not prevent the tests passing.
+Latest full suite: 4683 passing via `julia --project=. test/runtests.jl`.
+Monitoring report integration adds 245 checks, including direct simulation
+outputs, repeated estimates and seeded conservation checks.
+All 20 utilization checks pass, including rejection of zero and negative capacity.
+State monitoring tests verify zero initialization and independent accumulators
+between metrics and between runs.
+Observation tests cover integration with the previous value, equal timestamps,
+final intervals, validation before mutation and the explicit `nothing` return.
+Coverage includes explicit resource configuration, fresh pools per run,
+multi-stage resource contention, FIFO wake-up, and the resource-free regressions.
+The admission predicate has 58 checks for boundary conditions, negative limits,
+and unchanged state. Arrival integration adds 85 checks for bounded waiting,
+zero queue capacity, continued lazy arrivals after rejection, and resource waits.
+Public admission API tests cover both outcome vectors, queue-limit forwarding,
+seeded rejection counts, completion-only summaries, and repeated-run reports.
+`Pkg.test()` still reports the pre-existing project/manifest consistency warning;
+dependency resolution is outside this API change.
 
 ## Learning workflow
 
@@ -27,6 +41,10 @@ writes and runs tests, reviews the implementation, and explains the results.
 The assistant also maintains comments and documentation and proposes small
 commits; the learner commits and pushes. Implementation of simulation functions
 stays with the learner unless explicitly requested otherwise.
+The learner has delegated API wiring, constructors, tests and documentation to
+the assistant; simulation and scheduling logic remain learner exercises.
+Exercises should describe the need and function contract, not prescribe code
+line by line, so the learner can choose the implementation.
 
 ## Current: milestone 3
 
@@ -36,9 +54,31 @@ configurable worker capacity with FIFO waiting.
 Done:
 
 - Replaced `busy::Bool` with total `capacity` and occupied `in_use` slots.
-- Both `simulate` overloads accept positional capacity, defaulting to one.
+- Both `simulate` overloads require resource capacities as their second argument
+  and accept worker capacity as their third argument, defaulting to one.
+- `simulate_repeated(scenario, resources, num_runs, capacity = 1)` forwards
+  configuration to every run, preserving the seeds and warm-up behavior.
+- `SimState(scenario, resources, capacity = 1, rng = Xoshiro(scenario.seed))`
+  creates independent pools and queues through `register_resource!`.
 - `SimState` rejects non-positive capacity and initially has no occupied slots.
 - Starts occupy one slot; completions release one slot before starting queued work.
+- Implemented the standalone `ResourcePool`, positive-capacity validation,
+  `try_acquire!(pool)` and `release!(pool)`. All resource contract tests pass.
+- Implemented `ServiceStep` with an optional resource name and a validating
+  inner constructor. Its 26 checks cover resource names, zero and positive
+  durations, and rejection of negative or non-finite durations.
+- Extended `Job` with ordered steps and a finite total service time. The
+  original scalar-duration constructor creates one resource-free step;
+  empty steps have zero total duration. All 27 job-construction checks pass.
+- Extended `JobRecord` with steps and `step_index = 1`; 11 additional checks
+  cover preserved job data, initial state, empty jobs and legacy jobs.
+- Defined `StepCompleted(time, job_id, step_index)`. Calendar tests verify
+  mixed-event chronological ordering and insertion-order ties for this event.
+- Implemented `start_current_step!` for resource-free and resource-dependent
+  stages. Full pools queue jobs without scheduling a completion.
+- `StepCompleted` validates the job and stage, releases its resource, wakes the
+  first queued job, then advances the completing job. Only whole-job completion
+  releases the worker slot.
 - Added tests in `test/worker_tests.jl` for hand-calculated timings, FIFO starts,
   out-of-order completions, simultaneous events, zero service time, invalid
   capacity, seeded runs and per-event resource invariants.
@@ -46,9 +86,126 @@ Done:
 The three-job exercise (arrivals 0/1/2, service 3, two workers) now gives start
 times 0/1/3, completion times 3/4/6 and waiting times 0/0/1.
 
-Next exercise: pass worker capacity through `simulate_repeated`, which still
-uses one worker. Then work through shared DB pool capacity, bounded waiting
-queues, admission policies and time-weighted utilization, one exercise at a time.
+Named pools are connected to explicit-job simulation and covered end to end in
+`test/resource_api_tests.jl`. Resource configuration is mandatory, including an
+explicit `Dict{Symbol,Int}()` when no resources are needed. The caller supplies
+capacities, not mutable pools; each run builds its own pools and FIFO queues.
+This deliberately replaces the old API rather than keeping compatibility overloads.
+
+Each step requires zero or one shared resource, acquired before its duration
+starts and released when it ends. The worker stays occupied through all stages
+and resource waits. `waiting_time` still measures only initial worker waiting;
+resource waiting is included in latency. `service_time` caches step durations.
+
+Scenario-generated jobs currently have one resource-free stage, so configured
+pools are unused on that path. Resource-dependent stages use explicit jobs.
+Simultaneous acquisition of multiple resources and holding resources across
+steps are deferred. Bounded worker waiting and rejection of arrivals to a full
+queue are implemented. Time-weighted queue means and utilization are reported.
+The scope of additional admission policies remains open for milestone 3.
+
+Current exercise: `can_admit(state, queue_capacity)` is implemented and tested.
+It accepts a job when a worker is free or the worker waiting queue has room;
+zero allows no waiting and negative limits throw. The assistant has added
+`SimState(...; queue_capacity = typemax(Int))`, separate `JobRejection` storage
+in `state.rejected`, and `record_rejection!` bookkeeping. Its 61 additional
+checks cover queue configuration, independent rejection storage, successful
+rejection and nonmutating error paths.
+
+The learner has wired `can_admit` and `record_rejection!` into
+`handle!(::JobArrival)`, always scheduling the next arrival afterwards.
+The hand-calculated one-worker example with arrivals 0/0.5/1/3.5 and service
+time 3 completes jobs 1/2/4 at times 3/6/9 and rejects job 3 at time 1.
+Both `simulate` overloads and `simulate_repeated` now forward the
+`queue_capacity` keyword (default `typemax(Int)`). Single runs return
+`SimulationResult(completed, rejected)` rather than a vector. Existing callers
+that inspect completions now use `.completed`; `summarize(result)` delegates
+to completed-job statistics, rejecting a report with no completions.
+`RepeatedSummary.num_rejected` estimates the full-run count, independent of
+the completion-based warm-up fraction. Resource queues remain unbounded.
+
+The learner implemented `rejection_rate(result::SimulationResult)` in
+`src/metrics.jl`: rejected / (completed + rejected), or `0.0` for no outcomes,
+without mutation. Tests cover empty, all-completed, all-rejected and mixed
+reports. The assistant exported it and wired it into single-run display and
+`RepeatedSummary.rejection_rate`, using the existing estimate machinery across
+seeds. Rejection rates cover the full run independently of warm-up.
+Current topic: time-weighted queue length and worker/resource utilization.
+The assistant prepared `TimeWeightedStat` in `src/monitoring.jl`, with
+`area`, `last_time`, and `last_value`, all initially zero. `SimState` now owns
+independent `queue_length_stat` and `worker_busy_stat` accumulators. Both
+simulation loops now sample after handling every event, including the final
+event. `SimulationResult.monitoring` now exposes scalar snapshots of the metrics.
+
+The learner completed `observe!(stat::TimeWeightedStat, now::Float64,
+value::Float64)`: accumulate `last_value * (now - last_time)` before storing
+the new observation. Non-finite inputs, negative values and backwards time
+throw before mutation; valid updates return `nothing`. Equal timestamps
+contribute zero area. All 35 observation checks pass.
+The learner completed `time_weighted_mean(stat)`: return zero at zero duration,
+otherwise divide area by `last_time`, without mutation. All 11 mean checks pass.
+Accumulators currently measure from time zero through `last_time`.
+
+The learner completed `observe_state!(state::SimState)` in `src/engine.jl`.
+It records worker queue length and occupied worker count at the current time,
+changing only the accumulators and returning `nothing`. All 59 new checks pass,
+including equal timestamps, unchanged counts over a final interval, resource
+waits distinct from the worker queue, and preserved operational state.
+Worker occupancy includes jobs waiting for a resource, not just active stages.
+
+The learner connected sampling after `handle!` in both `simulate` loops.
+Event-driven monitoring fixtures cover explicit and lazy arrivals, initial idle
+time, queue waits, simultaneous events and zero-duration runs. They retain
+state and exercise real handlers. `test/monitoring_report_tests.jl` now also
+tests both `simulate` paths directly through their monitoring output.
+The learner added `res_queue_stat`, initialized independently by
+`register_resource!`, and records each resource's waiting count in
+`observe_state!`. Resource-queue monitoring checks pass, covering multiple
+names, independence between runs, registration, equal timestamps and contention.
+Two jobs sharing a capacity-one DB pool wait a total of 3 job-time units;
+with a resource-free tail ending at time 8, the mean DB queue length is 3/8.
+The learner added `res_busy_stat` and samples `pool.in_use` in `observe_state!`.
+The assistant completed constructor arguments and per-resource accumulator
+initialization in `register_resource!`, without changing the sampling logic.
+All 34 additional checks pass, including empty queues with occupied pools,
+counts greater than one, independent histories, registration error paths and
+the idle tail after the DB pool is released. In the example above, DB occupancy
+area is 6 over duration 8, distinct from worker occupancy area 11 and DB queue
+area 3.
+
+The learner implemented `utilization(stat, capacity)` as time-weighted mean
+occupancy divided by capacity, without mutation. All 20 focused checks pass.
+The learner corrected the guard to reject both zero and negative capacity before
+division, including at zero elapsed time. The assistant added the docstring
+and error message, leaving the calculation and guard to the learner.
+The assistant connected these helpers to `MonitoringSummary` and per-resource
+`ResourceSummary` snapshots, returned as `SimulationResult.monitoring` and
+included in its display. Outcome-only reports can still be constructed with
+two arguments; their monitoring is explicitly unavailable (`nothing`), not zero.
+Both simulation entry points always supply monitoring. The snapshot contains
+no live pools or accumulators, and each call owns a fresh resource dictionary.
+
+`simulate_repeated` now estimates worker queue means and utilization, plus
+resource queue means and utilization keyed by name. It uses the existing
+`estimate` helper, weighting each run equally. All monitoring covers time zero
+through the final event; completion-based warm-up affects neither single-run
+monitoring nor repeated monitoring estimates. The throughput window is unchanged.
+Scenario jobs remain resource-free, so repeated resource metrics are currently
+zero; explicit-job simulations exercise shared resources.
+
+Direct report tests cover hand calculations, initial idle time, zero-duration
+runs, simultaneous events, bounded admission, multi-slot resources, an unused
+pool, resource-free tails, snapshot independence, display and warm-up behavior.
+Seeded multi-stage tests check conservation of total queue waiting time and
+occupied slot-time against completed jobs and service steps. Repeated estimates
+are checked against the individual runs with the specified seeds.
+
+Next learner exercise: compare four jobs arriving at zero, each requiring one
+3-second DB step, under (workers, DB capacity) = (2, 1), (4, 1), and (2, 2).
+Predict total duration, worker queue mean, DB queue mean and both utilizations,
+then explain which capacity change improves completion time and why.
+After this final capacity-comparison exercise, review small commits. The scope
+of further admission policies still needs a decision before declaring milestone 3 complete.
 
 ## Milestone 0 — done
 
@@ -213,6 +370,10 @@ considered.
     arrival adds one job and each completion releases one slot. Capacity is
     fixed during a run; bulk admissions or capacity changes would need the
     dispatch rule to be revisited.
+21. **Resource configuration is explicit and required.** All simulation entry
+    points take a `Dict{Symbol,Int}` as their second argument, even if empty.
+    Pools and queues are mutable run state and are never supplied or shared by
+    the caller. Existing tests and examples follow the new contract.
 
 ## Open questions
 
