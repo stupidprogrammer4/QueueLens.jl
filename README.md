@@ -91,7 +91,7 @@ protect:
 | 0 | Julia foundations: package skeleton, deterministic hand-calculated simulation, event-ordering tests | done |
 | 1 | Minimal discrete-event engine: event calendar, FIFO queue, single worker, job results | done |
 | 2 | Probabilistic workloads: arrival/service distributions, seeds, percentiles, confidence intervals | done |
-| 3 | Worker capacity, shared resource pools and backpressure: DB pool, bounded queues, admission policies, utilization | in progress |
+| 3 | Worker capacity, shared resource pools and backpressure: DB pool, bounded FIFO admission with rejection, utilization | done |
 | 4 | Failure, timeout and retry: injection, timeout events, backoff policies, retry amplification | planned |
 | 5 | CLI, TOML configuration, CSV/JSON summaries and plots | planned |
 | 6 | Parameter sweeps and evidence-based bottleneck recommendations | planned |
@@ -101,8 +101,9 @@ probabilistic workloads, per-run percentiles and confidence intervals across
 repeated seeds. Named resource pools, sequential stages and bounded worker
 queues with rejection reports are implemented. Full-run time-weighted queue
 means and worker/resource utilization are available in single and repeated runs.
-The final capacity-comparison exercise and scope of additional admission policies
-remain to be settled before closing milestone 3.
+Milestone 3 is complete, including the verified capacity-comparison experiment.
+Its admission policy is bounded FIFO waiting with rejection when full;
+additional admission policies are future extensions. Next is failure, timeout and retry.
 See [PROGRESS.md](PROGRESS.md) for decisions and the next learning exercise.
 
 ### Worker capacity
@@ -204,6 +205,24 @@ equal weight across seeds; neither time histories nor durations are pooled.
 Scenario-generated jobs currently use no shared resources, so their configured
 resource metrics are zero. Resource contention experiments use explicit jobs.
 
+### Capacity comparison experiment
+
+Run `julia --project=. experiments/capacity_tradeoff.jl` to compare four jobs
+arriving at zero, each requiring one three-second DB step. The experiment prints
+completion times, both queue means and both utilization fractions. It uses
+unbounded worker queues, no randomness and no warm-up discard.
+
+| Case | Workers | DB slots | End time (s) | Mean worker queue | Mean DB queue | Worker utilization | DB utilization |
+|---|---|---|---|---|---|---|---|
+| A | 2 | 1 | 12 | 0.75 | 0.75 | 0.875 | 1.0 |
+| B | 4 | 1 | 12 | 0.0 | 1.5 | 0.625 | 1.0 |
+| C | 2 | 2 | 6 | 1.0 | 0.0 | 1.0 | 1.0 |
+
+Doubling workers in A moves waiting to the DB queue without shortening the run.
+Doubling DB capacity instead halves the end time. Queue means use each run's
+own duration; C has less total worker waiting than A (6 versus 9 job-seconds),
+even though its mean worker queue is larger (1.0 versus 0.75).
+
 ## Non-goals for v0.1
 
 Real task execution, a production job queue, distributed simulation, Kubernetes
@@ -278,10 +297,12 @@ QueueLens/
 │   ├── admission_api_tests.jl
 │   ├── monitoring_tests.jl
 │   ├── monitoring_report_tests.jl
+│   ├── capacity_tradeoff_tests.jl
 │   ├── scenario_tests.jl
 │   ├── metric_tests.jl
 │   └── repeated_tests.jl
 ├── experiments/
+│   ├── capacity_tradeoff.jl
 │   ├── distribution_shapes.jl
 │   └── variance_effect.jl
 └── README.md

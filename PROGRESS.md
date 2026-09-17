@@ -10,12 +10,13 @@ is still open. Kept per section 14 of the project guide.
 | 0 | Julia foundations, package skeleton, deterministic run | done |
 | 1 | Minimal discrete-event engine | done |
 | 2 | Probabilistic workloads | done |
-| 3 | Worker capacity, shared resource pools and backpressure | in progress |
+| 3 | Worker capacity, shared resource pools and backpressure | done |
 | 4 | Failure, timeout and retry | not started |
 | 5 | CLI, configuration and plots | not started |
 | 6 | Parameter sweep and recommendation | not started |
 
-Latest full suite: 4683 passing via `julia --project=. test/runtests.jl`.
+Latest full suite: 4731 passing via `julia --project=. test/runtests.jl`.
+The final capacity experiment adds 48 checks against hand-calculated outcomes.
 Monitoring report integration adds 245 checks, including direct simulation
 outputs, repeated estimates and seeded conservation checks.
 All 20 utilization checks pass, including rejection of zero and negative capacity.
@@ -46,10 +47,10 @@ the assistant; simulation and scheduling logic remain learner exercises.
 Exercises should describe the need and function contract, not prescribe code
 line by line, so the learner can choose the implementation.
 
-## Current: milestone 3
+## Milestone 3 - done
 
-Milestones 0 through 2 are complete. The first part of milestone 3 is implemented:
-configurable worker capacity with FIFO waiting.
+Milestones 0 through 3 are complete. Milestone 3 was closed on 2026-09-17 after
+the capacity-comparison experiment and regression tests passed.
 
 Done:
 
@@ -102,9 +103,11 @@ pools are unused on that path. Resource-dependent stages use explicit jobs.
 Simultaneous acquisition of multiple resources and holding resources across
 steps are deferred. Bounded worker waiting and rejection of arrivals to a full
 queue are implemented. Time-weighted queue means and utilization are reported.
-The scope of additional admission policies remains open for milestone 3.
+The completion scope uses bounded FIFO worker waiting with rejection when full;
+zero queue capacity provides immediate rejection when all workers are occupied.
+Additional admission policies are deferred, not prerequisites for this milestone.
 
-Current exercise: `can_admit(state, queue_capacity)` is implemented and tested.
+The admission exercise `can_admit(state, queue_capacity)` is implemented and tested.
 It accepts a job when a worker is free or the worker waiting queue has room;
 zero allows no waiting and negative limits throw. The assistant has added
 `SimState(...; queue_capacity = typemax(Int))`, separate `JobRejection` storage
@@ -200,12 +203,39 @@ Seeded multi-stage tests check conservation of total queue waiting time and
 occupied slot-time against completed jobs and service steps. Repeated estimates
 are checked against the individual runs with the specified seeds.
 
-Next learner exercise: compare four jobs arriving at zero, each requiring one
-3-second DB step, under (workers, DB capacity) = (2, 1), (4, 1), and (2, 2).
-Predict total duration, worker queue mean, DB queue mean and both utilizations,
-then explain which capacity change improves completion time and why.
-After this final capacity-comparison exercise, review small commits. The scope
-of further admission policies still needs a decision before declaring milestone 3 complete.
+### Final capacity experiment
+
+The learner correctly predicted that adding workers cannot speed up a
+capacity-one DB, while doubling DB capacity with two workers halves total time.
+The assistant implemented `experiments/capacity_tradeoff.jl` and its regression
+tests. Run it with `julia --project=. experiments/capacity_tradeoff.jl`.
+Four jobs arrive at zero, each with one three-second DB step; worker queues are
+unbounded. There is no randomness and no warm-up discard.
+
+| Case | Workers | DB slots | End time | Mean worker queue | Mean DB queue | Worker utilization | DB utilization |
+|---|---|---|---|---|---|---|---|
+| A | 2 | 1 | 12 | 0.75 | 0.75 | 0.875 | 1.0 |
+| B | 4 | 1 | 12 | 0.0 | 1.5 | 0.625 | 1.0 |
+| C | 2 | 2 | 6 | 1.0 | 0.0 | 1.0 | 1.0 |
+
+A and B complete at 3/6/9/12; C completes at 3/3/6/6. Additional workers move
+waiting from the worker queue to the DB queue without improving end time.
+Workers remain occupied while waiting for DB access, so worker utilization is
+not a measure of active DB work alone. Each queue mean uses its own run duration:
+C's worker waiting area is 6, smaller than A's 9, despite a larger queue mean
+because the duration falls from 12 to 6.
+
+Definition of done met: configurable worker capacity, resource-aware sequential
+steps, FIFO resource waiting and release, explicit isolated resource configuration,
+bounded worker admission with rejection reporting, full-run time-weighted queue
+and utilization reports, repeated estimates, and a verified capacity experiment.
+Alternative admission policies, simultaneous multi-resource acquisition and
+resource-aware scenario generation remain future extensions. They are not
+implemented or required by the closed milestone's scope.
+
+Next milestone: failure, timeout and retry. Begin by defining how an attempt
+differs from a logical job and what happens to its held resources on failure.
+No milestone-4 logic has been implemented yet.
 
 ## Milestone 0 — done
 
