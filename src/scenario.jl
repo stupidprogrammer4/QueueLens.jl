@@ -23,6 +23,7 @@ struct Scenario
     num_jobs::Int
     seed::Int
 
+    # Workload generation is bounded by a strictly positive job count.
     function Scenario(arrivals::Distribution, service::Distribution, num_jobs::Int, seed::Int)
         if num_jobs <= 0
             throw(ArgumentError("num_jobs must be positive, got $num_jobs"))

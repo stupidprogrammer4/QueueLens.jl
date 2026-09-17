@@ -25,6 +25,7 @@ hand-calculated scenarios that the engine tests are built on.
 struct Constant <: Distribution
     value::Float64
 
+    # Zero is useful for simultaneous arrivals and instantaneous service.
     function Constant(value::Float64)
         if value < 0
             throw(ArgumentError("Constant distribution must be nonnegative"))
@@ -45,6 +46,7 @@ nothing about how much longer you will wait.
 struct Exponential <: Distribution
     rate::Float64
 
+    # The parameter is a rate, so sampling divides by it rather than multiplying.
     function Exponential(rate::Float64)
         if rate <= 0
             throw(ArgumentError("Exponential distribution must have positive rate"))
@@ -76,6 +78,7 @@ struct LogNormal <: Distribution
     mu::Float64
     sigma::Float64
 
+    # mu is unrestricted log-space location; sigma controls positive spread.
     function LogNormal(mu::Float64, sigma::Float64)
         if sigma <= 0
             throw(ArgumentError("LogNormal distribution must have positive sigma"))

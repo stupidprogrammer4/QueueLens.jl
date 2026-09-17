@@ -44,6 +44,12 @@ function histogram(samples::Vector{Float64}; bins::Int = 20, width::Int = 50)
     end
 end
 
+"""
+    main()
+
+Print seeded sample histograms for four distributions with the same mean.
+Use one RNG stream so rerunning the experiment reproduces every histogram.
+"""
 function main()
     rng = Xoshiro(42)
     n = 100_000

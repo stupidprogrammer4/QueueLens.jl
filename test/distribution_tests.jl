@@ -3,6 +3,7 @@
     # Compute the sample mean directly for the distribution checks.
     sample_mean(xs) = sum(xs) / length(xs)
 
+    # A fresh seeded stream keeps each sample batch independent of test order.
     draws(d, seed, n) = (rng = Xoshiro(seed); [sample(rng, d) for _ in 1:n])
 
     @testset "the same seed reproduces the same samples" begin
