@@ -36,3 +36,19 @@ struct ServiceCompleted <: SimEvent
     time::Float64
     job_id::Int
 end
+
+"""
+    StepCompleted(time, job_id, step_index)
+
+The indexed stage of `job_id` finishes at `time`. Completing a stage does not
+by itself mean the job is finished or its worker slot can be released.
+
+The event carries the stage index so its handler can compare it with the
+job record's current stage. Its handler releases the stage's resource, wakes
+the first waiting job for that pool, and advances the completing job.
+"""
+struct StepCompleted <: SimEvent
+    time::Float64
+    job_id::Int
+    step_index::Int
+end

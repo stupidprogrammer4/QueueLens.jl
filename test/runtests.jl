@@ -4,6 +4,8 @@ using QueueLens
 
 @testset "QueueLens.jl" begin
     include("distribution_tests.jl")
+    include("service_step_tests.jl")
+    include("job_tests.jl")
     include("calendar_tests.jl")
     include("engine_tests.jl")
     include("worker_tests.jl")
