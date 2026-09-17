@@ -1,8 +1,16 @@
+"""
+    QueueLens
+
+Discrete-event queue simulation with worker slots, named resource pools and
+seeded workloads. Simulation inputs describe work and resource capacities;
+each run owns its mutable state. Completed jobs feed summary statistics.
+"""
 module QueueLens
 
 # Public API
-export Job, JobResult
-export Summary, summarize
+export Job, JobResult, JobRejection, SimulationResult
+export ResourceSummary, MonitoringSummary
+export Summary, summarize, rejection_rate
 export Estimate, RepeatedSummary, simulate_repeated
 export Scenario
 export Distribution, Constant, Exponential, LogNormal, sample
@@ -15,6 +23,8 @@ include("distributions.jl")
 include("scenario.jl")
 include("jobs.jl")
 include("events.jl")
+include("resources.jl")
+include("monitoring.jl")
 include("state.jl")
 include("metrics.jl")
 include("engine.jl")

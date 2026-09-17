@@ -118,3 +118,106 @@ struct JobResult
     waiting_time::Float64
     latency::Float64
 end
+
+"""
+    JobRejection(id, arrival_time, rejection_time, reason)
+
+Record a job refused before entering the worker queue. Rejections are stored
+separately from completed `JobResult`s because no service was performed.
+The admission bookkeeping helper currently records `:queue_full` as the reason.
+"""
+struct JobRejection
+    id::Int
+    arrival_time::Float64
+    rejection_time::Float64
+    reason::Symbol
+end
+
+"""
+    ResourceSummary(capacity, mean_queue_length, utilization)
+
+Scalar snapshot of one resource's full-run time-weighted metrics. Queue length
+counts waiting jobs; utilization is mean occupied slots divided by capacity.
+"""
+struct ResourceSummary
+    capacity::Int
+    mean_queue_length::Float64
+    utilization::Float64
+end
+
+"""
+    MonitoringSummary(duration, worker_capacity, mean_queue_length, worker_utilization, resources)
+
+Time-weighted metrics over [0, duration], including initial idle time and the
+final draining interval. Utilization is a fraction, not a percentage; workers
+remain occupied during resource waits. Zero-duration runs report zero means
+and utilization. `resources` maps names to scalar `ResourceSummary` snapshots,
+not live pools or accumulators. Completion-based warm-up does not apply here.
+"""
+struct MonitoringSummary
+    duration::Float64
+    worker_capacity::Int
+    mean_queue_length::Float64
+    worker_utilization::Float64
+    resources::Dict{Symbol,ResourceSummary}
+end
+
+"""
+    SimulationResult(completed, rejected, monitoring)
+    SimulationResult(completed, rejected)
+
+Outcomes of one finished simulation. `completed` holds `JobResult`s in
+completion order; `rejected` holds `JobRejection`s in rejection order.
+Each input job has one outcome. Rejected jobs have no service latency and
+must not be included in the completed-job latency statistics.
+Simulation entry points always provide `monitoring::MonitoringSummary`.
+Manually assembled outcome-only reports may omit it; `nothing` means unavailable,
+not zero utilization. Outcomes alone cannot reconstruct resource histories.
+"""
+struct SimulationResult
+    completed::Vector{JobResult}
+    rejected::Vector{JobRejection}
+    monitoring::Union{Nothing,MonitoringSummary}
+end
+
+# Preserve outcome-only construction without inventing missing time histories.
+SimulationResult(completed::Vector{JobResult}, rejected::Vector{JobRejection}) =
+    SimulationResult(completed, rejected, nothing)
+
+"""
+    show(io, ::MIME"text/plain", monitoring::MonitoringSummary)
+
+Display the full observation window and scalar metrics, sorting resource names
+so output order does not depend on dictionary insertion order.
+"""
+function Base.show(io::IO, ::MIME"text/plain", monitoring::MonitoringSummary)
+    println(io, "MonitoringSummary (full run, time 0 to ", monitoring.duration, "):")
+    println(io, "  worker_capacity: ", monitoring.worker_capacity)
+    println(io, "  mean_queue_length: ", monitoring.mean_queue_length)
+    println(io, "  worker_utilization: ", monitoring.worker_utilization)
+    for name in sort!(collect(keys(monitoring.resources)))
+        resource = monitoring.resources[name]
+        println(io, "  resource ", name, ": capacity=", resource.capacity,
+                ", mean_queue_length=", resource.mean_queue_length,
+                ", utilization=", resource.utilization)
+    end
+end
+
+"""
+    show(io, ::MIME"text/plain", result::SimulationResult)
+
+Show outcome counts, the rejected fraction and available time-weighted metrics
+without printing every job in a large run.
+The full records remain accessible through `completed` and `rejected`.
+"""
+function Base.show(io::IO, ::MIME"text/plain", result::SimulationResult)
+    println(io, "SimulationResult:")
+    println(io, "  completed: ", length(result.completed))
+    println(io, "  rejected: ", length(result.rejected))
+    println(io, "  rejection_rate: ", rejection_rate(result))
+    if result.monitoring === nothing
+        println(io, "  monitoring: unavailable")
+    else
+        show(io, MIME"text/plain"(), result.monitoring)
+    end
+end
