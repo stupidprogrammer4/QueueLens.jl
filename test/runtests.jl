@@ -16,6 +16,7 @@ using QueueLens
     include("admission_api_tests.jl")
     include("monitoring_tests.jl")
     include("monitoring_report_tests.jl")
+    include("capacity_tradeoff_tests.jl")
     include("scenario_tests.jl")
     include("metric_tests.jl")
     include("repeated_tests.jl")
