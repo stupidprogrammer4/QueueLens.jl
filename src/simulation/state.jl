@@ -1,4 +1,40 @@
-# Simulation state and the event calendar.
+# Runtime job records, calendar entry types and per-run state.
+
+"""
+    JobRecord(job)
+
+Mutable bookkeeping for a job that is currently inside the system.
+
+The engine retains job timing and steps here while events progress through
+the calendar. `arrival_time` and `start_time` determine waiting time when the
+final `JobResult` is built.
+
+`start_time` is `NaN` until the job actually enters service. `timeout` retains
+the input duration; the deadline is `start_time + timeout` when enabled.
+Retries will need separate attempt identity.
+
+`steps` retains the job's read-only stage descriptions. `step_index` starts at
+1 and identifies the next unfinished stage. An index beyond `length(steps)`
+means none remain, including for a job with no steps. The `StepCompleted`
+handler advances this index without releasing the job's worker slot.
+`step_active` distinguishes executing a stage from waiting to acquire its
+resource. `held_resource` is actual ownership, not the next stage's demand;
+it is `nothing` during resource waits and resource-free stages.
+"""
+mutable struct JobRecord
+    id::Int
+    arrival_time::Float64
+    service_time::Float64
+    start_time::Float64
+    steps::Vector{ServiceStep}
+    step_index::Int
+    step_active::Bool
+    held_resource::Union{Nothing,Symbol}
+    timeout::Union{Nothing,Float64}
+end
+
+# Share the read-only steps; each record starts with its own unset start time and index.
+JobRecord(job::Job) = JobRecord(job.id, job.arrival_time, job.service_time, NaN, job.steps, 1, false, nothing, job.timeout)
 
 using DataStructures: BinaryMinHeap
 
@@ -25,8 +61,9 @@ CalendarEntry(event::SimEvent, sequence::Int) = CalendarEntry(event.time, sequen
 """
     isless(a::CalendarEntry, b::CalendarEntry)
 
-Total order on calendar entries: earlier `time` first, and among equal times,
-smaller `sequence` first.
+Total order on calendar entries: earlier `time` first, ordinary events before
+timeouts at equal times, then smaller `sequence` within either group. This
+lets completion at the deadline win, including newly scheduled zero-time steps.
 
 This is what makes runs reproducible. A binary heap is not a stable sort, so
 without the `sequence` tiebreaker two events sharing a timestamp could come
@@ -34,7 +71,8 @@ out in either order depending on the heap's internal layout, and two runs of
 the same scenario could diverge.
 """
 function Base.isless(a::CalendarEntry, b::CalendarEntry)
-    return a.time < b.time || (a.time == b.time && a.sequence < b.sequence)
+    return isless((a.time, a.event isa JobTimedOut, a.sequence),
+                  (b.time, b.event isa JobTimedOut, b.sequence))
 end
 
 """
@@ -78,6 +116,8 @@ Fields:
   - `records`        — in-flight bookkeeping, keyed by job id.
   - `results`        — completed jobs, in completion order.
   - `rejected`       - rejected jobs, in rejection order, separate from results.
+  - `failed`         - terminal failures in failure order, separate from results.
+  - `failed_ids`     - terminal failed-job ids, retained to identify stale events.
   - `clock_log`      — clock values appended by the monotonicity test's loop.
                        Production simulation loops do not populate it.
   - `jobs_generated` — how many arrivals have been created so far. Generation
@@ -108,6 +148,8 @@ mutable struct SimState{R<:AbstractRNG}
     records::Dict{Int,JobRecord}
     results::Vector{JobResult}
     rejected::Vector{JobRejection}
+    failed::Vector{JobFailure}
+    failed_ids::Set{Int}
     clock_log::Vector{Float64}
     jobs_generated::Int
     max_calendar_size::Int
@@ -141,7 +183,8 @@ function SimState(
         rng, scenario, 0.0, BinaryMinHeap{CalendarEntry}(), 0,
         Int[], queue_capacity, Dict{Symbol,ResourcePool}(), Dict{Symbol,Vector{Int}}(),
         capacity, 0, TimeWeightedStat(), TimeWeightedStat(), Dict{Symbol,TimeWeightedStat}(),
-        Dict{Symbol,TimeWeightedStat}(), Dict{Int,JobRecord}(), JobResult[], JobRejection[], Float64[], 0, 0
+        Dict{Symbol,TimeWeightedStat}(), Dict{Int,JobRecord}(), JobResult[], JobRejection[],
+        JobFailure[], Set{Int}(), Float64[], 0, 0
     )
     for (name, pool_capacity) in resources
         register_resource!(state, name, pool_capacity)
@@ -167,79 +210,4 @@ function register_resource!(state::SimState, name::Symbol, capacity::Int)
     state.res_queue_stat[name] = TimeWeightedStat()
     state.res_busy_stat[name] = TimeWeightedStat()
     return nothing
-end
-
-"""
-    record_rejection!(state, job_id) -> Nothing
-
-Record a `:queue_full` rejection at `state.now` and remove the job's active
-record. The caller decides admission before enqueueing or starting the job.
-Unknown, already queued, started, or not-yet-arrived jobs throw `ArgumentError`
-without changing state. Repeating a rejection fails because its record is gone.
-
-This bookkeeping helper does not release workers, modify queues, or schedule
-events. The arrival handler must still schedule the next arrival.
-"""
-function record_rejection!(state::SimState, job_id::Int)
-    if !haskey(state.records, job_id)
-        throw(ArgumentError("cannot reject unknown job id $job_id"))
-    end
-    record = state.records[job_id]
-    if !isnan(record.start_time) || job_id in state.waiting
-        throw(ArgumentError("cannot reject already admitted job id $job_id"))
-    end
-    if state.now < record.arrival_time
-        throw(ArgumentError("cannot reject job id $job_id before its arrival"))
-    end
-    push!(state.rejected, JobRejection(job_id, record.arrival_time, state.now, :queue_full))
-    delete!(state.records, job_id)
-    return nothing
-end
-
-"""
-    schedule!(state, event)
-
-Put `event` on the calendar, to be handled when virtual time reaches it.
-
-Ties are broken by insertion order: every entry is stamped with a
-monotonically increasing `sequence`, and [`isless`](@ref) compares
-`(time, sequence)`. Two runs with identical inputs therefore always pop
-events in the same order.
-
-Scheduling an event earlier than `state.now` throws `ArgumentError` to protect
-the monotonic virtual clock.
-
-Also rejects an infinite `time`. Some discrete-event simulators use `Inf` as a
-"never happens" sentinel; this one does not, so an infinite timestamp can only
-mean a computation went wrong upstream, and a run that silently parked an
-event at infinity would report results that look complete but are not.
-"""
-function schedule!(state::SimState, event::SimEvent)
-    if event.time < state.now
-        throw(ArgumentError("scheduling into the past: now=$(state.now), event.time=$(event.time)"))
-    end
-    if isinf(event.time)
-        throw(ArgumentError("scheduling an event at infinite time is not allowed"))
-    end
-    entry = CalendarEntry(event, state.next_sequence)
-    push!(state.calendar, entry)
-    state.next_sequence += 1
-    state.max_calendar_size = max(state.max_calendar_size, length(state.calendar))
-end
-
-"""
-    pop_next!(state) -> SimEvent
-
-Remove and return the earliest event on the calendar, unwrapped from its
-`CalendarEntry` — callers deal in events, not in scheduling metadata.
-
-Does NOT advance the clock. Only the main loop in engine.jl does that, so
-that there is exactly one place in the codebase where virtual time moves.
-
-Calling this on an empty calendar is a bug in the caller; the main loop is
-expected to check first.
-"""
-function pop_next!(state::SimState)
-    entry = pop!(state.calendar)
-    return entry.event
 end

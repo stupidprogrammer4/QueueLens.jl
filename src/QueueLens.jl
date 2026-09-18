@@ -8,7 +8,7 @@ each run owns its mutable state. Completed jobs feed summary statistics.
 module QueueLens
 
 # Public API
-export Job, JobResult, JobRejection, SimulationResult
+export Job, JobResult, JobRejection, JobFailure, SimulationResult
 export ResourceSummary, MonitoringSummary
 export Summary, summarize, rejection_rate
 export Estimate, RepeatedSummary, simulate_repeated
@@ -16,17 +16,28 @@ export Scenario
 export Distribution, Constant, Exponential, LogNormal, sample
 export simulate
 
-# Implementation
-# Order matters: types must be defined before they are named in another
-# type's fields or in a method signature.
-include("distributions.jl")
-include("scenario.jl")
-include("jobs.jl")
-include("events.jl")
-include("resources.jl")
-include("monitoring.jl")
-include("state.jl")
-include("metrics.jl")
-include("engine.jl")
+# Workload definitions.
+include("models/distributions.jl")
+include("models/scenario.jl")
+include("models/jobs.jl")
+include("models/events.jl")
+
+# Result types are needed by runtime state as well as reporting.
+include("reporting/results.jl")
+
+# Runtime storage, event processing and public simulation entry points.
+include("simulation/resources.jl")
+include("simulation/monitoring.jl")
+include("simulation/state.jl")
+include("simulation/calendar.jl")
+include("simulation/outcomes.jl")
+include("simulation/scheduling.jl")
+include("simulation/handlers.jl")
+include("simulation/engine.jl")
+
+# Single-run statistics, repeated experiments and text rendering.
+include("reporting/metrics.jl")
+include("reporting/repeated.jl")
+include("reporting/display.jl")
 
 end # module QueueLens

@@ -1,0 +1,184 @@
+# Event dispatch and terminal-event filtering.
+
+"""
+    handle!(state, event::JobArrival)
+
+A job has arrived. If `can_admit` accepts it, put it at the back of the FIFO
+worker queue and try to start one job. Otherwise record a `:queue_full`
+rejection without occupying a worker or creating a completion event.
+
+Arrival never starts a job directly: it only makes the queue non-empty and
+lets [`start_next_job!`](@ref) decide. That keeps the "may the worker begin?"
+rule in exactly one place. Both admission and rejection schedule the next
+arrival so a full queue does not stop workload generation.
+"""
+function handle!(state::SimState, event::JobArrival)
+    if can_admit(state, state.queue_capacity)
+        state.waiting = push!(state.waiting, event.job_id)
+        start_next_job!(state)
+    else
+        record_rejection!(state, event.job_id)
+    end
+    schedule_next_arrival!(state)
+end
+
+"""
+    handle!(state, event::ServiceCompleted)
+
+A worker has finished a job. Record its `JobResult`, release one occupied
+slot, then try to start the next waiting job.
+
+The record is deleted once its result is built. A second `ServiceCompleted`
+for that job therefore throws `ArgumentError` instead of producing a duplicate
+result. Retries will need attempt-aware checks in milestone 4.
+"""
+function handle!(state::SimState, event::ServiceCompleted)
+    if !isempty(state.failed_ids) && is_stale_event(state, event)
+        return nothing
+    end
+    if haskey(state.records, event.job_id)
+        record = state.records[event.job_id]
+        arrival_time = record.arrival_time
+        start_time = record.start_time
+        completion_time = state.now
+        waiting_time = start_time - arrival_time
+        latency = completion_time - arrival_time
+        result = JobResult(event.job_id, record.arrival_time, record.start_time, completion_time, waiting_time, latency)
+        push!(state.results, result)
+        delete!(state.records, event.job_id)
+        state.in_use -= 1
+        start_next_job!(state)
+    else
+        throw(ArgumentError("ServiceCompleted for unknown job id $(event.job_id)"))
+    end
+end
+
+
+"""
+    handle!(state, event::StepCompleted)
+
+Finish the current stage after validating the job id and stage index.
+Release its resource, if any, and let the first job in that resource's FIFO
+queue acquire it before the completing job advances to its next stage.
+
+Stage completion preserves worker occupancy and the original job start time.
+If no stages remain, `start_current_step!` schedules whole-job completion.
+Unknown jobs, invalid stage indices and unregistered resources throw
+`ArgumentError`; releasing an idle pool also throws.
+"""
+function handle!(state::SimState, event::StepCompleted)
+    if !isempty(state.failed_ids) && is_stale_event(state, event)
+        return nothing
+    end
+    if !haskey(state.records, event.job_id)
+        throw(ArgumentError("StepCompleted for unknown job id $(event.job_id)"))
+    end
+    record = state.records[event.job_id]
+    if !(1 <= event.step_index <= length(record.steps))
+        throw(ArgumentError("StepCompleted for job id $(event.job_id): expected step index in 1:$(length(record.steps)), got $(event.step_index)"))
+    end
+    if event.step_index != record.step_index
+        throw(ArgumentError("StepCompleted for job id $(event.job_id): expected current step $(record.step_index), got $(event.step_index)"))
+    end
+    resource = record.steps[event.step_index].resource
+    if resource !== nothing
+        pool = get(state.resources, resource, nothing)
+        if pool === nothing
+            throw(ArgumentError("StepCompleted for job id $(event.job_id): resource $(resource) not registered"))
+        end
+        release_resource!(state, record, resource)
+    end
+    record.step_active = false
+    record.step_index += 1
+    start_current_step!(state, event.job_id)
+end
+
+"""
+    handle!(state, event::JobFailed) -> Nothing
+
+Terminate an active job via `record_failure!`, release its
+held resource (if any) and worker, and resume waiting work. Resource waiters
+must get their FIFO turn before newly admitted worker jobs can take that pool.
+Repeat failure events for ids in `state.failed_ids` have no effect.
+Do not schedule success or retry for the failed job. Invalid faults must fail
+before mutation. Bookkeeping returns the removed record with its ownership data.
+"""
+function handle!(state::SimState, event::JobFailed)
+    if event.job_id in state.failed_ids
+        return nothing
+    end
+    record = record_failure!(state, event)
+    release_resource!(state, record)
+    state.in_use -= 1
+    start_next_job!(state)
+    return nothing
+end
+
+"""
+    is_stale_completion(state, event::SimEvent) -> Bool
+
+Identify StepCompleted or ServiceCompleted events belonging
+to terminal failed jobs. Other events, including arrivals, are not stale here.
+Read state without mutation. Unknown ids are not automatically failed ids.
+
+The shared simulation loop uses this predicate BEFORE advancing the clock; stale
+calendar entries must not extend the monitoring window. Completion handlers
+also consult it for direct calls. The empty-failed-set fast path skips this
+check in runs without failures.
+Retries will require attempt identity instead of job-id-only invalidation.
+"""
+function is_stale_completion(state::SimState, event::SimEvent)
+    return event isa Union{ServiceCompleted,StepCompleted} && event.job_id in state.failed_ids
+end
+
+"""
+    is_stale_event(state, event::SimEvent) -> Bool
+
+Extend stale detection to JobTimedOut. A timeout is stale
+when its id is absent from state.records, including already completed, failed
+or unknown ids. A record waiting for a worker or resource is not absent.
+For all other event types, retain is_stale_completion's existing contract:
+unknown completions must still reach validation, and arrivals are not stale.
+Read only; do not advance time, remove events or modify state.
+The loop calls this before advancing the clock, including for timeout tails
+in successful runs where failed_ids is empty.
+"""
+function is_stale_event(state::SimState, event::SimEvent)
+    result = false
+    if event isa JobTimedOut
+        result = !(haskey(state.records, event.job_id))
+    else
+        result = is_stale_completion(state, event)
+    end
+    return result
+end
+
+"""
+    handle!(state, event::JobTimedOut) -> Nothing
+
+Ignore stale timeouts; otherwise call record_timeout! before
+changing ownership or queues. The returned record is no longer in records.
+Remove a resource waiter from its queue without disturbing the remaining FIFO
+order or releasing someone else's resource. For an executing job, release
+only held_resource (if any) and resume that pool's first waiter. In both cases,
+release one worker and start the next worker-queued job, after resource waiters
+have had priority. No success, retry, heap editing or monitoring update here.
+Return nothing, including on duplicate or post-completion timeout calls.
+"""
+function handle!(state::SimState, event::JobTimedOut)
+    if is_stale_event(state, event)
+        return nothing
+    end
+    record = record_timeout!(state, event)
+    wanted_res = record.steps[record.step_index].resource
+    held_res = record.held_resource
+    if held_res !== nothing
+        release_resource!(state, record)
+    elseif wanted_res !== nothing
+        waiting = state.resource_waiting[wanted_res]
+        filter!(id -> id != record.id, waiting)
+    end
+    state.in_use -= 1
+    start_next_job!(state)
+    return nothing
+end
