@@ -17,6 +17,21 @@
 /experiments/out/
 /output/
 
+# Studio dependencies and generated browser-test artifacts
+/app/node_modules/
+/app/test-results/
+/app/playwright-report/
+/app/blob-report/
+/app/playwright/.cache/
+
+# Local logs and private environment settings; keep shareable templates
+*.log
+npm-debug.log*
+.env
+.env.*
+!.env.example
+!.env.template
+
 # Editors
 .vscode/
 .idea/
