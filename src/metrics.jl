@@ -365,13 +365,13 @@ end
 """
     rejection_rate(result::SimulationResult) -> Float64
 
-Return rejected jobs divided by all completed and rejected jobs. The result
+Return rejected jobs divided by all completed, rejected and terminal failed jobs. The result
 is a fraction in [0, 1], not a percentage or a count per unit time. An empty
 report returns `0.0` by convention. This does not mutate the report and always
 uses the full run, independent of completion-based warm-up in `summarize`.
 """
 function rejection_rate(result::SimulationResult)
-    total_jobs = length(result.completed) + length(result.rejected)
+    total_jobs = length(result.completed) + length(result.rejected) + length(result.failed)
     rate = 0.0
     if total_jobs !== 0
         rate = length(result.rejected) / total_jobs
