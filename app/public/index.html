@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#191d22" />
+    <title>QueueLens Studio</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/studio.css" />
+    <script defer src="/vendor/lucide.min.js"></script>
+    <script defer src="/vendor/chart.umd.min.js"></script>
+    <script defer src="/studio.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="QueueLens Studio"
+        ><span class="brand-mark"
+          ><i data-lucide="chart-no-axes-combined"></i></span
+        ><span dir="ltr">QueueLens <small>STUDIO</small></span></a
+      >
+      <div class="connection">
+        <span class="status-dot"></span><span id="connection">Julia</span>
+      </div>
+      <div class="top-actions">
+        <button id="new-scenario" class="button secondary" title="New scenario">
+          <i data-lucide="plus"></i><span>New scenario</span>
+        </button>
+        <button
+          id="import"
+          class="icon-button"
+          data-tip="import"
+          aria-label="Import"
+        >
+          <i data-lucide="upload"></i>
+        </button>
+        <div class="menu-wrap">
+          <button
+            id="save-menu"
+            class="icon-button"
+            data-tip="saveConfig"
+            aria-label="Save configuration"
+          >
+            <i data-lucide="save"></i>
+          </button>
+          <div id="save-options" class="menu" hidden>
+            <button data-save="json">JSON</button
+            ><button data-save="toml">TOML</button>
+          </div>
+        </div>
+        <input id="import-file" type="file" accept=".json,.toml" hidden />
+      </div>
+    </header>
+    <header class="workspace-head">
+      <div class="project-title">
+        <span class="eyebrow" data-i18n="workspace">WORKSPACE</span>
+        <div class="title-line">
+          <input
+            id="project-name"
+            aria-label="Scenario name"
+            maxlength="100"
+          /><span id="dirty" class="quiet-tag"></span>
+        </div>
+      </div>
+      <div class="run-actions">
+        <button
+          id="editor-toggle"
+          class="icon-button mobile-only"
+          data-tip="configuration"
+          aria-label="Configuration"
+        >
+          <i data-lucide="sliders-horizontal"></i>
+        </button>
+        <button id="cancel" class="button danger" hidden>
+          <i data-lucide="square"></i><span data-i18n="cancel"></span>
+        </button>
+        <button id="run" class="button primary">
+          <i data-lucide="play"></i><span data-i18n="run"></span>
+        </button>
+      </div>
+    </header>
+    <nav class="view-tabs" aria-label="Workspace views">
+      <a
+        class="rail-brand"
+        href="/"
+        aria-label="QueueLens home"
+        title="QueueLens home"
+        ><i data-lucide="workflow"></i
+      ></a>
+      <button data-view="overview" class="active">
+        <i data-lucide="panels-top-left"></i><span data-i18n="overview"></span>
+      </button>
+      <button data-view="sweep">
+        <i data-lucide="grid-2x2"></i><span data-i18n="sweep"></span>
+      </button>
+      <button data-view="history">
+        <i data-lucide="history"></i><span data-i18n="history"></span
+        ><span id="history-count" class="count">0</span>
+      </button>
+      <button data-view="compare">
+        <i data-lucide="git-compare-arrows"></i
+        ><span data-i18n="compare"></span>
+      </button>
+      <span class="rail-footer"><span class="status-dot"></span>LOCAL</span>
+    </nav>
+    <div id="progress" hidden>
+      <div id="progress-fill"></div>
+      <span id="progress-label" role="status"></span>
+    </div>
+    <div id="error" class="error-banner" role="alert" hidden>
+      <i data-lucide="circle-alert"></i><span></span
+      ><button class="icon-button" id="dismiss-error" aria-label="Dismiss">
+        <i data-lucide="x"></i>
+      </button>
+    </div>
+    <div class="workspace">
+      <aside id="editor" class="editor">
+        <div class="section-heading">
+          <h2 data-i18n="configuration"></h2>
+          <button
+            id="editor-close"
+            class="icon-button mobile-only"
+            aria-label="Close"
+          >
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+        <label class="preset-label"
+          ><span data-i18n="preset"></span
+          ><select id="preset"></select
+        ></label>
+        <form id="editor-form"></form>
+        <div class="editor-footer">
+          <i data-lucide="cpu"></i><span data-i18n="engine"></span
+          ><span id="engine-version"></span>
+        </div>
+      </aside>
+      <main id="main">
+        <section id="view-overview" class="view">
+          <div class="view-heading">
+            <div>
+              <span class="eyebrow">OBSERVABILITY</span>
+              <h1>Simulation overview</h1>
+            </div>
+            <span id="run-meta" class="tab-meta"></span>
+          </div>
+          <section class="pipeline-section">
+            <div class="section-heading">
+              <h2 data-i18n="pipeline"></h2>
+              <span id="pipeline-meta" class="subtle"></span>
+            </div>
+            <div id="pipeline" class="pipeline" dir="ltr"></div>
+          </section>
+          <div class="results-heading">
+            <h2 data-i18n="results"></h2>
+            <div class="inline-actions">
+              <span id="report-stamp" class="subtle"></span
+              ><button
+                id="export-json"
+                class="icon-button"
+                data-tip="exportReport"
+                aria-label="Export report"
+                disabled
+              >
+                <i data-lucide="file-json"></i></button
+              ><button
+                id="export-csv"
+                class="icon-button"
+                data-tip="exportCSV"
+                aria-label="Export CSV"
+                disabled
+              >
+                <i data-lucide="sheet"></i>
+              </button>
+            </div>
+          </div>
+          <div id="metrics" class="metrics"></div>
+          <div id="empty-results" class="empty-state">
+            <i data-lucide="chart-area"></i>
+            <h3 data-i18n="noResults"></h3>
+          </div>
+          <div id="report-content" hidden>
+            <div class="chart-grid">
+              <section class="plot-section">
+                <div class="section-heading">
+                  <h3 data-i18n="queueHistory"></h3>
+                  <div class="inline-actions">
+                    <span class="subtle" data-i18n="firstRun"></span
+                    ><button
+                      class="icon-button"
+                      data-chart="trace-chart"
+                      data-tip="exportPNG"
+                      aria-label="Export chart"
+                    >
+                      <i data-lucide="image-down"></i>
+                    </button>
+                  </div>
+                </div>
+                <div class="chart-frame">
+                  <canvas
+                    id="trace-chart"
+                    aria-label="Queue and worker history"
+                    role="img"
+                  ></canvas>
+                </div>
+              </section>
+              <section class="plot-section">
+                <div class="section-heading">
+                  <h3 data-i18n="latencyDistribution"></h3>
+                  <button
+                    class="icon-button"
+                    data-chart="latency-chart"
+                    data-tip="exportPNG"
+                    aria-label="Export chart"
+                  >
+                    <i data-lucide="image-down"></i>
+                  </button>
+                </div>
+                <div class="chart-frame">
+                  <canvas
+                    id="latency-chart"
+                    aria-label="Latency histogram"
+                    role="img"
+                  ></canvas>
+                </div>
+              </section>
+            </div>
+            <section class="resource-section">
+              <div class="section-heading">
+                <h3 data-i18n="resourceUsage"></h3>
+                <span class="subtle" data-i18n="timeWeighted"></span>
+              </div>
+              <div id="resource-stats" class="resource-stats"></div>
+            </section>
+            <section class="jobs-section">
+              <div class="section-heading">
+                <h3 data-i18n="jobs"></h3>
+                <div class="table-tools">
+                  <input
+                    id="job-search"
+                    type="search"
+                    data-placeholder="searchJob"
+                    aria-label="Search job"
+                  /><select id="job-status" aria-label="Job status">
+                    <option value="all" data-i18n="all"></option>
+                    <option value="completed" data-i18n="completed"></option>
+                    <option value="failed" data-i18n="failed"></option>
+                    <option value="rejected" data-i18n="rejected"></option>
+                  </select>
+                </div>
+              </div>
+              <div class="table-scroll"><table id="jobs-table"></table></div>
+              <div class="pagination">
+                <span id="page-label"></span>
+                <div>
+                  <button
+                    id="previous-page"
+                    class="icon-button"
+                    aria-label="Previous page"
+                  >
+                    <i data-lucide="chevron-left"></i></button
+                  ><button
+                    id="next-page"
+                    class="icon-button"
+                    aria-label="Next page"
+                  >
+                    <i data-lucide="chevron-right"></i>
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+        <section id="view-sweep" class="view" hidden>
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow" data-i18n="capacityLab"></span>
+              <h2 data-i18n="sweep"></h2>
+            </div>
+            <button id="run-sweep" class="button primary">
+              <i data-lucide="grid-2x2"></i><span data-i18n="runSweep"></span>
+            </button>
+          </div>
+          <form id="sweep-form" class="sweep-controls">
+            <label
+              ><span data-i18n="workerCandidates"></span
+              ><input id="sweep-workers" value="2,4,8" required dir="ltr"
+            /></label>
+            <label
+              ><span data-i18n="resource"></span
+              ><select id="sweep-resource"></select
+            ></label>
+            <label
+              ><span data-i18n="capacityCandidates"></span
+              ><input id="sweep-capacities" value="1,2,4" required dir="ltr"
+            /></label>
+            <label
+              ><span data-i18n="p99Target"></span
+              ><input
+                id="sweep-p99"
+                type="number"
+                min="0"
+                step="0.1"
+                value="1"
+                required
+            /></label>
+            <label
+              ><span data-i18n="lossTarget"></span
+              ><input
+                id="sweep-loss"
+                type="number"
+                min="0"
+                max="100"
+                step="0.1"
+                value="5"
+                required
+            /></label>
+            <label
+              ><span data-i18n="workerWeight"></span
+              ><input
+                id="sweep-worker-cost"
+                type="number"
+                min="0.001"
+                step="any"
+                value="1"
+                required
+            /></label>
+            <label
+              ><span data-i18n="resourceWeight"></span
+              ><input
+                id="sweep-resource-cost"
+                type="number"
+                min="0.001"
+                step="any"
+                value="2"
+                required
+            /></label>
+          </form>
+          <div id="sweep-empty" class="empty-state">
+            <i data-lucide="grid-2x2"></i>
+            <h3 data-i18n="noSweep"></h3>
+          </div>
+          <div id="sweep-result" hidden>
+            <div id="recommendation"></div>
+            <div class="section-heading">
+              <h3 data-i18n="capacityMap"></h3>
+              <span class="subtle">P99 · ms</span>
+            </div>
+            <div id="heatmap" class="table-scroll"></div>
+            <div class="section-heading">
+              <h3 data-i18n="testedConfigurations"></h3>
+              <button
+                id="export-sweep"
+                class="icon-button"
+                data-tip="exportReport"
+                aria-label="Export sweep"
+              >
+                <i data-lucide="file-json"></i>
+              </button>
+            </div>
+            <div class="table-scroll"><table id="sweep-table"></table></div>
+            <p class="method-note" data-i18n="sweepMethod"></p>
+          </div>
+        </section>
+        <section id="view-history" class="view" hidden>
+          <div class="section-heading">
+            <h2 data-i18n="history"></h2>
+            <span class="subtle" data-i18n="localHistory"></span>
+          </div>
+          <div id="history-list"></div>
+        </section>
+        <section id="view-compare" class="view" hidden>
+          <div class="section-heading">
+            <h2 data-i18n="compare"></h2>
+            <span class="subtle" data-i18n="comparisonScope"></span>
+          </div>
+          <div id="comparison-options"></div>
+          <div id="comparison-table" class="table-scroll"></div>
+          <div class="comparison-chart">
+            <canvas
+              id="compare-chart"
+              aria-label="Comparison of run latency"
+              role="img"
+            ></canvas>
+          </div>
+        </section>
+      </main>
+    </div>
+    <footer class="statusbar">
+      <span
+        ><span class="status-dot"></span
+        ><span id="status" data-i18n="ready"></span></span
+      ><span dir="ltr">QueueLens / discrete-event engine / Julia</span>
+    </footer>
+    <dialog id="job-dialog">
+      <div class="section-heading">
+        <h2 id="job-dialog-title"></h2>
+        <button id="close-dialog" class="icon-button" aria-label="Close">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <div id="job-detail"></div>
+    </dialog>
+    <div id="toast" role="status" hidden></div>
+  </body>
+</html>
