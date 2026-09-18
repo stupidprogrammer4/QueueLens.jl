@@ -11,11 +11,17 @@ is still open. Kept per section 14 of the project guide.
 | 1 | Minimal discrete-event engine | done |
 | 2 | Probabilistic workloads | done |
 | 3 | Worker capacity, shared resource pools and backpressure | done |
-| 4 | Failure, timeout and retry | not started |
+| 4 | Failure, timeout and retry | in progress (failure and timeout complete) |
 | 5 | CLI, configuration and plots | not started |
 | 6 | Parameter sweep and recommendation | not started |
 
-Latest full suite: 4731 passing via `julia --project=. test/runtests.jl`.
+Latest default suite: 5220 passing via both `julia --project=. test/runtests.jl`
+and `julia --project=. -e 'using Pkg; Pkg.test()'` after the refactor.
+Timeout preparation adds 139 checks; all 91 timeout behavior checks now pass
+and are part of the default suite. Refactoring adds 22 shared-engine checks.
+The failure scaffold adds 117 passing checks and the completed failure handler
+adds 64 independent checks. All 56 end-to-end failure contract checks now pass
+and are included in the passing default suite.
 The final capacity experiment adds 48 checks against hand-calculated outcomes.
 Monitoring report integration adds 245 checks, including direct simulation
 outputs, repeated estimates and seeded conservation checks.
@@ -46,6 +52,86 @@ The learner has delegated API wiring, constructors, tests and documentation to
 the assistant; simulation and scheduling logic remain learner exercises.
 Exercises should describe the need and function contract, not prescribe code
 line by line, so the learner can choose the implementation.
+The learner requested a faster pace: group exercises around a complete behavior
+while the assistant prepares supporting types, wiring, tests and experiments.
+
+## Current: milestone 4
+
+### Completed: timeout
+
+The assistant prepared optional `Job.timeout`, record propagation, validated
+`JobTimedOut` events, one deadline scheduled at worker start, and
+`record_timeout!` for both executing jobs and resource waiters. Outcome storage
+remains `result.failed` with reason `:timeout`. No retry or attempt identity yet.
+The deadline excludes worker-queue waiting but includes resource waiting.
+Ordinary events precede timeouts at the same time, preserving insertion order
+otherwise, so whole-job completion exactly at the deadline wins.
+
+The learner completed `is_stale_event` and `handle!(::SimState, ::JobTimedOut)`;
+these now live in `src/simulation/handlers.jl`. Existing completion classification
+is retained and delegated to. The shared loop filters timeout events before
+advancing time, even with no failed ids. The default suite covers preparation
+and complete behavior; `julia --project=. test/timeouts/timeout_contract_tests.jl` also
+runs the 91 timeout contracts independently.
+See `docs/timeout_exercise.md` for requirements, helper responsibilities and
+reference timelines. End-to-end timeout was completed on 2026-09-18.
+
+### Responsibility grouping and DRY
+
+At the learner's request, the completed behavior was tested before reorganizing.
+The public API remains unchanged. Full physical grouping now separates
+`src/models`, `src/simulation` and `src/reporting`. Only `QueueLens.jl` remains
+at the source root. `src/simulation/engine.jl` holds entry points, a shared
+`run!` loop and observation integration; adjacent files handle calendar
+operations, validated outcome recording, scheduling and event dispatch.
+`JobRecord` moved to runtime state; input jobs no longer contain reporting
+types or display methods. Result containers, single-run metrics, repeated-run
+estimates and display methods each have a file in `src/reporting`.
+
+`release_resource!` shares release, ownership cleanup and FIFO handoff across
+stage completion, failure and timeout. Event-specific validation stays in its
+own handler/helper. `record_terminal_failure!` shares only the validated
+outcome mutation, not the different failure and timeout eligibility rules.
+Test fixtures are consolidated in `test/support/fixtures.jl` and use the
+production loop. Test files physically live under models, simulation, resources,
+failures, timeouts and reporting; only `runtests.jl` remains at the test root.
+Old flat source/test files and the previous engine directory were removed
+after moving their contents, without deleting coverage or compatibility APIs.
+All 85 top-level implementation definitions/imports match the pre-move syntax
+trees after stripping locations/docstrings and ignoring file order. See
+`docs/architecture.md` for the current map and standalone test commands.
+The completed layout passes all 5220 tests through both the direct runner and
+`Pkg.test()`, plus the standalone 56 failure and 91 timeout contracts. All
+three experiment scripts also run successfully. Include-coverage checks confirm
+that every one of the 16 implementation files and 24 test/support files is
+referenced once by its entry point, with no leftover flat files or stale paths.
+Retry and attempt identity remain the next milestone-4 work, not implemented.
+
+### Completed: active-stage failure
+
+Active-stage failure is complete; retries and random failure injection
+are not implemented. See `test/failures/failure_contract_tests.jl` for behavioral contracts.
+The assistant prepared `JobFailed`, terminal `JobFailure` outcomes, independent
+`state.failed` and `failed_ids`, and `record_failure!` validation/bookkeeping.
+`JobRecord.step_active` and `held_resource` now track actual executing stages
+and ownership through normal starts and completions.
+
+The shared simulation loop and completion handlers are wired to a learner-owned
+stale-completion predicate. It is bypassed when no failed ids exist. Explicit
+job simulation accepts experimental `failures = JobFailed[]`; configured faults
+are validated and scheduled. `handle!(state, event::JobFailed)` now releases
+resources and the worker, preserves resource-waiter priority and ignores
+duplicate failures. `is_stale_completion(state, event)` now identifies only
+completion events belonging to known failed jobs, without changing state.
+Stale calendar entries do not extend the monitoring window. There is no retry yet.
+
+`SimulationResult.failed` exposes failure outcomes separately. Omitted failure
+vectors are fresh empty vectors; rejection rate now counts failures among all
+terminal outcomes. Completion summaries still describe successes only.
+
+The default suite covers scaffolding, the failure handler, end-to-end failure
+behavior and regressions. The failure contracts also run independently with
+`julia --project=. test/failures/failure_contract_tests.jl`.
 
 ## Milestone 3 - done
 
@@ -80,7 +166,7 @@ Done:
 - `StepCompleted` validates the job and stage, releases its resource, wakes the
   first queued job, then advances the completing job. Only whole-job completion
   releases the worker slot.
-- Added tests in `test/worker_tests.jl` for hand-calculated timings, FIFO starts,
+- Added tests in `test/simulation/worker_tests.jl` for hand-calculated timings, FIFO starts,
   out-of-order completions, simultaneous events, zero service time, invalid
   capacity, seeded runs and per-event resource invariants.
 
@@ -88,7 +174,7 @@ The three-job exercise (arrivals 0/1/2, service 3, two workers) now gives start
 times 0/1/3, completion times 3/4/6 and waiting times 0/0/1.
 
 Named pools are connected to explicit-job simulation and covered end to end in
-`test/resource_api_tests.jl`. Resource configuration is mandatory, including an
+`test/resources/resource_api_tests.jl`. Resource configuration is mandatory, including an
 explicit `Dict{Symbol,Int}()` when no resources are needed. The caller supplies
 capacities, not mutable pools; each run builds its own pools and FIFO queues.
 This deliberately replaces the old API rather than keeping compatibility overloads.
@@ -128,13 +214,13 @@ to completed-job statistics, rejecting a report with no completions.
 the completion-based warm-up fraction. Resource queues remain unbounded.
 
 The learner implemented `rejection_rate(result::SimulationResult)` in
-`src/metrics.jl`: rejected / (completed + rejected), or `0.0` for no outcomes,
+`src/reporting/metrics.jl`: rejected / (completed + rejected), or `0.0` for no outcomes,
 without mutation. Tests cover empty, all-completed, all-rejected and mixed
 reports. The assistant exported it and wired it into single-run display and
 `RepeatedSummary.rejection_rate`, using the existing estimate machinery across
 seeds. Rejection rates cover the full run independently of warm-up.
 Current topic: time-weighted queue length and worker/resource utilization.
-The assistant prepared `TimeWeightedStat` in `src/monitoring.jl`, with
+The assistant prepared `TimeWeightedStat` in `src/simulation/monitoring.jl`, with
 `area`, `last_time`, and `last_value`, all initially zero. `SimState` now owns
 independent `queue_length_stat` and `worker_busy_stat` accumulators. Both
 simulation loops now sample after handling every event, including the final
@@ -149,7 +235,7 @@ The learner completed `time_weighted_mean(stat)`: return zero at zero duration,
 otherwise divide area by `last_time`, without mutation. All 11 mean checks pass.
 Accumulators currently measure from time zero through `last_time`.
 
-The learner completed `observe_state!(state::SimState)` in `src/engine.jl`.
+The learner completed `observe_state!(state::SimState)` in `src/simulation/engine.jl`.
 It records worker queue length and occupied worker count at the current time,
 changing only the accumulators and returning `nothing`. All 59 new checks pass,
 including equal timestamps, unchanged counts over a final interval, resource
@@ -159,7 +245,7 @@ Worker occupancy includes jobs waiting for a resource, not just active stages.
 The learner connected sampling after `handle!` in both `simulate` loops.
 Event-driven monitoring fixtures cover explicit and lazy arrivals, initial idle
 time, queue waits, simultaneous events and zero-duration runs. They retain
-state and exercise real handlers. `test/monitoring_report_tests.jl` now also
+state and exercise real handlers. `test/reporting/monitoring_report_tests.jl` now also
 tests both `simulate` paths directly through their monitoring output.
 The learner added `res_queue_stat`, initialized independently by
 `register_resource!`, and records each resource's waiting count in
@@ -233,9 +319,8 @@ Alternative admission policies, simultaneous multi-resource acquisition and
 resource-aware scenario generation remain future extensions. They are not
 implemented or required by the closed milestone's scope.
 
-Next milestone: failure, timeout and retry. Begin by defining how an attempt
-differs from a logical job and what happens to its held resources on failure.
-No milestone-4 logic has been implemented yet.
+Milestone 4 has completed active-stage failure; see the current exercise above.
+Timeouts are also complete; retries remain learner work.
 
 ## Milestone 0 — done
 

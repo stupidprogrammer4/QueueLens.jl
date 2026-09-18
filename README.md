@@ -92,7 +92,7 @@ protect:
 | 1 | Minimal discrete-event engine: event calendar, FIFO queue, single worker, job results | done |
 | 2 | Probabilistic workloads: arrival/service distributions, seeds, percentiles, confidence intervals | done |
 | 3 | Worker capacity, shared resource pools and backpressure: DB pool, bounded FIFO admission with rejection, utilization | done |
-| 4 | Failure, timeout and retry: injection, timeout events, backoff policies, retry amplification | planned |
+| 4 | Failure, timeout and retry: injection, timeout events, backoff policies, retry amplification | in progress (failure and timeout complete) |
 | 5 | CLI, TOML configuration, CSV/JSON summaries and plots | planned |
 | 6 | Parameter sweeps and evidence-based bottleneck recommendations | planned |
 
@@ -121,7 +121,7 @@ Worker capacity is the third argument and defaults to one.
 `simulate_repeated(scenario, resources, num_runs, capacity)` uses the same
 configuration for each run, with fresh pools, waiting queues and RNG state.
 Both simulation overloads return `SimulationResult`, with `completed` and
-`rejected` vectors and a `monitoring` snapshot. `summarize(result)` summarises
+`rejected` and `failed` vectors and a `monitoring` snapshot. `summarize(result)` summarises
 only the completed jobs; rejected jobs have no service latency.
 
 ### Shared resources
@@ -223,6 +223,31 @@ Doubling DB capacity instead halves the end time. Queue means use each run's
 own duration; C has less total worker waiting than A (6 versus 9 job-seconds),
 even though its mean worker queue is larger (1.0 versus 0.75).
 
+### Milestone 4 exercise status
+
+Active-stage failure handling and stale-completion detection are implemented
+and tested. Explicit-job runs accept experimental `failures` events. A failure
+releases the job's worker and held resource; its old completion events are
+ignored without extending the simulation clock.
+Normal runs without failures retain their existing behavior. Outcome storage
+in `result.failed`, resource ownership tracking and dispatch connections are ready.
+
+The [failure contracts](test/failures/failure_contract_tests.jl) cover the reference
+scenario and ownership rules. These behavioral tests are included in the
+standard suite and also run separately with
+`julia --project=. test/failures/failure_contract_tests.jl`.
+The rejection-rate denominator includes successes, rejections and failures.
+Probability-based failure and retry behavior are not implemented.
+
+Timeout is available as `Job(...; timeout=2.0)`: a whole-job
+deadline from worker start, including resource waits but excluding worker-queue
+waiting. Whole-job completion exactly at the deadline wins. A timed-out job
+releases its worker and any held resource, or leaves its resource waiting queue.
+See [the completed timeout exercise](docs/timeout_exercise.md) for the contracts.
+Its 91 behavioral checks are included in the default suite and also run with
+`julia --project=. test/timeouts/timeout_contract_tests.jl`. Timeouts use `result.failed`
+with `reason = :timeout`, not a separate outcome list.
+
 ## Non-goals for v0.1
 
 Real task execution, a production job queue, distributed simulation, Kubernetes
@@ -270,47 +295,53 @@ base_delay_ms = 100.0
 ```text
 QueueLens/
 ├── Project.toml
+├── Manifest.toml
+├── README.md
 ├── PROGRESS.md
 ├── src/
-│   ├── QueueLens.jl      # module, exports, includes — no logic
-│   ├── distributions.jl  # Constant, Exponential, LogNormal, sample
-│   ├── scenario.jl       # Scenario
-│   ├── jobs.jl           # jobs, outcomes and monitoring report types
-│   ├── events.jl         # SimEvent and its subtypes
-│   ├── resources.jl      # standalone ResourcePool and acquire/release operations
-│   ├── monitoring.jl     # time-weighted accumulator, mean and utilization
-│   ├── state.jl          # SimState, the event calendar
-│   ├── metrics.jl        # summaries, percentiles, repeated-run estimates
-│   └── engine.jl         # handlers and the main loop
+│   ├── QueueLens.jl           # module entry point, exports and load order
+│   ├── models/
+│   │   ├── distributions.jl  # duration distributions and sampling
+│   │   ├── scenario.jl       # generated-workload configuration
+│   │   ├── jobs.jl           # input jobs and sequential service steps
+│   │   └── events.jl         # event definitions
+│   ├── simulation/
+│   │   ├── state.jl          # JobRecord, CalendarEntry and SimState
+│   │   ├── resources.jl      # resource-pool primitive
+│   │   ├── monitoring.jl     # time-weighted accumulators
+│   │   ├── calendar.jl       # event insertion and extraction
+│   │   ├── outcomes.jl       # validated outcome bookkeeping
+│   │   ├── scheduling.jl     # admission, starts and resource handoff
+│   │   ├── handlers.jl       # event dispatch and stale-event detection
+│   │   └── engine.jl         # simulate entry points and shared run! loop
+│   └── reporting/
+│       ├── results.jl        # outcome and summary containers
+│       ├── metrics.jl        # single-run statistics
+│       ├── repeated.jl       # confidence intervals and repeated runs
+│       └── display.jl        # text rendering
 ├── test/
-│   ├── runtests.jl
-│   ├── distribution_tests.jl
-│   ├── service_step_tests.jl
-│   ├── job_tests.jl
-│   ├── calendar_tests.jl
-│   ├── engine_tests.jl
-│   ├── step_engine_tests.jl
-│   ├── worker_tests.jl
-│   ├── resource_tests.jl
-│   ├── resource_api_tests.jl
-│   ├── admission_tests.jl
-│   ├── admission_api_tests.jl
-│   ├── monitoring_tests.jl
-│   ├── monitoring_report_tests.jl
-│   ├── capacity_tradeoff_tests.jl
-│   ├── scenario_tests.jl
-│   ├── metric_tests.jl
-│   └── repeated_tests.jl
+│   ├── runtests.jl           # complete suite
+│   ├── models/              # input and job construction
+│   ├── simulation/          # calendar, stages, workers and scenarios
+│   ├── resources/           # resource pools, admission and API integration
+│   ├── failures/            # failure validation, ownership and contracts
+│   ├── timeouts/            # deadlines, waiting cancellation and contracts
+│   ├── reporting/           # observations, summaries and capacity comparison
+│   └── support/
+│       └── fixtures.jl      # shared test setup
 ├── experiments/
 │   ├── capacity_tradeoff.jl
 │   ├── distribution_shapes.jl
 │   └── variance_effect.jl
-└── README.md
+└── docs/
+    ├── architecture.md
+    └── timeout_exercise.md
 ```
 
-Files are split only when responsibilities become real. Later milestones add
-`policies.jl` under `src/`, plus `scenarios/`, `docs/` and
-`benchmarks/`.
+See [the architecture guide](docs/architecture.md) for responsibility boundaries
+and load order. Old flat implementation/test files have been removed; there are
+no duplicate forwarding files. The public API and `test/runtests.jl` entry point
+are unchanged. Later milestones may add policies, scenarios and benchmarks.
 
 ## A note on interpretation
 
