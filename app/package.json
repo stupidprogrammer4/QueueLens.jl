@@ -1,0 +1,19 @@
+{
+  "name": "queuelens-studio",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "vendor": "node scripts/vendor.cjs",
+    "screenshots": "node scripts/screenshots.cjs",
+    "format": "prettier --write public/studio.js public/studio.css public/index.html tests/*.cjs playwright.config.cjs"
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.3.0",
+    "@playwright/test": "^1.63.0",
+    "chart.js": "^4.5.1",
+    "lucide": "^1.47.0"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.8"
+  }
+}
