@@ -44,6 +44,9 @@ include("support/fixtures.jl")
         include("retries/backoff_contract_tests.jl")
         include("retries/retry_lifecycle_tests.jl")
     end
+    @testset "Experiment studio" begin
+        include("experiments/experiment_tests.jl")
+    end
     @testset "Monitoring and reporting" begin
         include("reporting/monitoring_tests.jl")
         include("reporting/monitoring_report_tests.jl")

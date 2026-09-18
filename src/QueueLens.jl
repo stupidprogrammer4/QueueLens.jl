@@ -17,6 +17,7 @@ export Distribution, Constant, Exponential, LogNormal, sample
 export simulate
 export ServiceStep, RetryPolicy, FixedBackoff, ExponentialBackoff, FullJitterBackoff
 export retry_delay, AttemptResult
+export default_configuration, validate_configuration, configuration_toml, run_experiment, run_sweep
 
 # Workload definitions.
 include("models/distributions.jl")
@@ -43,5 +44,7 @@ include("simulation/engine.jl")
 include("reporting/metrics.jl")
 include("reporting/repeated.jl")
 include("reporting/display.jl")
+include("experiments/configuration.jl")
+include("experiments/runner.jl")
 
 end # module QueueLens
