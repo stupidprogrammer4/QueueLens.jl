@@ -1,6 +1,6 @@
 # Isolate the executable experiment's helpers from other tests and experiments.
 module CapacityTradeoffExperiment
-    include(joinpath(@__DIR__, "..", "experiments", "capacity_tradeoff.jl"))
+    include(joinpath(@__DIR__, "..", "..", "experiments", "capacity_tradeoff.jl"))
 end
 
 @testset "capacity tradeoff experiment" begin
