@@ -1,6 +1,20 @@
 # Validated terminal-outcome bookkeeping; slot ownership stays with handlers.
 
 """
+    validate_event_attempt(record, event::AttemptEvent) -> Nothing
+
+Require an event to target the live attempt before changing ownership or outcomes.
+Stale events must be filtered by the caller first. A mismatch reaching this
+guard throws without mutation; future attempts are invalid, not stale.
+"""
+function validate_event_attempt(record::JobRecord, event::AttemptEvent)
+    if event.attempt_id != record.attempt_id
+        throw(ArgumentError("$(nameof(typeof(event))) for job id $(event.job_id): expected attempt $(record.attempt_id), got $(event.attempt_id)"))
+    end
+    return nothing
+end
+
+"""
     record_rejection!(state, job_id) -> Nothing
 
 Record a `:queue_full` rejection at `state.now` and remove the job's active
@@ -35,12 +49,15 @@ and remove its in-flight record. Return that record so the handler can inspect
 the resource it held. Does NOT free workers or resources, wake queues, cancel
 events or update monitoring: those belong to event dispatch.
 
+With terminal=false, perform the same validation and return the live record
+without recording a terminal outcome. Retry-aware handlers use this mode.
+
 Call before changing the active-step metadata. Unknown or previously terminal
 jobs, wrong stages, waiting jobs, inconsistent ownership and mismatched event
 times throw `ArgumentError` before any mutation. Repeat failures are handled
 by the caller using `failed_ids`; this bookkeeping helper rejects duplicates.
 """
-function record_failure!(state::SimState, event::JobFailed)
+function record_failure!(state::SimState, event::JobFailed; terminal::Bool=true)
     if event.time != state.now
         throw(ArgumentError("failure time must match the simulation clock"))
     end
@@ -48,6 +65,7 @@ function record_failure!(state::SimState, event::JobFailed)
         throw(ArgumentError("cannot record failure for unknown or terminal job id $(event.job_id)"))
     end
     record = state.records[event.job_id]
+    validate_event_attempt(record, event)
     if !record.step_active || !isfinite(record.start_time) ||
        !(record.arrival_time <= record.start_time <= state.now) ||
        event.step_index != record.step_index ||
@@ -66,7 +84,7 @@ function record_failure!(state::SimState, event::JobFailed)
        (!haskey(state.resources, resource) || state.resources[resource].in_use <= 0)
         throw(ArgumentError("failed job's resource must have an occupied slot"))
     end
-    return record_terminal_failure!(state, record, event.reason)
+    return terminal ? record_terminal_failure!(state, record, event.reason) : record
 end
 
 """
@@ -81,8 +99,9 @@ All validation precedes mutation. This helper does not remove resource queue
 entries, release slots, wake jobs, cancel events or update monitoring. Those
 actions belong to the timeout handler. Unknown/terminal ids are
 rejected here; the handler must ignore stale timeout events before calling it.
+With terminal=false, validation returns the still-live record without mutation.
 """
-function record_timeout!(state::SimState, event::JobTimedOut)
+function record_timeout!(state::SimState, event::JobTimedOut; terminal::Bool=true)
     if event.time != state.now
         throw(ArgumentError("timeout time must match the simulation clock"))
     end
@@ -90,6 +109,7 @@ function record_timeout!(state::SimState, event::JobTimedOut)
         throw(ArgumentError("cannot record timeout for unknown or terminal job id $(event.job_id)"))
     end
     record = state.records[event.job_id]
+    validate_event_attempt(record, event)
     if record.timeout === nothing || !isfinite(record.start_time) ||
        !(record.arrival_time <= record.start_time < state.now) ||
        record.start_time + record.timeout != state.now
@@ -117,7 +137,7 @@ function record_timeout!(state::SimState, event::JobTimedOut)
             throw(ArgumentError("inactive started job must wait exactly once for its stage's resource"))
         end
     end
-    return record_terminal_failure!(state, record, :timeout)
+    return terminal ? record_terminal_failure!(state, record, :timeout) : record
 end
 
 """
@@ -132,6 +152,7 @@ function record_terminal_failure!(state::SimState, record::JobRecord, reason::Sy
     push!(state.failed, JobFailure(record.id, record.arrival_time, record.start_time,
                                   state.now, record.step_index, reason))
     push!(state.failed_ids, record.id)
+    state.terminal_attempts[record.id] = record.attempt_id
     delete!(state.records, record.id)
     return record
 end

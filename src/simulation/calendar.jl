@@ -22,7 +22,7 @@ function schedule!(state::SimState, event::SimEvent)
     if event.time < state.now
         throw(ArgumentError("scheduling into the past: now=$(state.now), event.time=$(event.time)"))
     end
-    if isinf(event.time)
+    if !isfinite(event.time)
         throw(ArgumentError("scheduling an event at infinite time is not allowed"))
     end
     entry = CalendarEntry(event, state.next_sequence)

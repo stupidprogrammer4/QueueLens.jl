@@ -16,11 +16,14 @@ waiting; the default is effectively unbounded. Full worker queues reject
 new arrivals with reason `:queue_full`.
 
 `failures` is an experimental explicit-job-only list of `JobFailed` events,
-with at most one fault per job. Faults must target known stages at or after
+with at most one fault per job and attempt, within the configured retry budget.
+Faults must target known stages at or after
 arrival and, at dispatch, a stage actually executing. They are scheduled after
 the input arrivals, with normal insertion-order ties. Failure releases the
 job's worker and held resource; its old completions are ignored without
-advancing the clock. Failed jobs are not retried.
+advancing the clock. retry_policy controls whole-job retries; the default allows
+only the initial attempt. seed controls fault/backoff draws, and trace enables
+bounded snapshots independently from exact monitoring integrals.
 
 Explicit jobs may set `timeout`, measured from worker start and including
 resource waits. Whole-job completion exactly at the deadline wins. Timeouts
@@ -35,30 +38,37 @@ overload generates arrivals lazily, keeping only the next arrival on the
 calendar alongside at most `capacity` service completions.
 """
 function simulate(jobs::Vector{Job}, resources::Dict{Symbol,Int}, capacity::Int = 1;
-                  queue_capacity::Int = typemax(Int), failures::Vector{JobFailed} = JobFailed[])
+                  queue_capacity::Int = typemax(Int), failures::Vector{JobFailed} = JobFailed[],
+                  retry_policy::RetryPolicy=RetryPolicy(), seed::Int=0, trace::Bool=false,
+                  event_limit::Int=5_000_000, cancelled::Function=()->false)
     # The distributions are placeholders: this path never samples them, because
     # jobs_generated already sits at the limit, which switches lazy generation
     # off. See the `jobs_generated` note on SimState.
-    scenario = Scenario(Constant(0.0), Constant(0.0), length(jobs), 0)
-    state = SimState(scenario, resources, capacity; queue_capacity)
+    isempty(jobs) && throw(ArgumentError("jobs must not be empty"))
+    scenario = Scenario(Constant(0.0), Constant(0.0), length(jobs), seed)
+    state = SimState(scenario, resources, capacity; queue_capacity, retry_policy, trace, event_limit, cancelled)
     state.jobs_generated = length(jobs)
     for job in jobs
+        haskey(state.records, job.id) && throw(ArgumentError("duplicate job id $(job.id)"))
+        all(step -> step.resource === nothing || haskey(resources, step.resource), job.steps) ||
+            throw(ArgumentError("job $(job.id) references an unregistered resource"))
         QueueLens.schedule!(state, QueueLens.JobArrival(job.arrival_time, job.id))
         state.records[job.id] = JobRecord(job)
     end
-    failure_ids = Set{Int}()
+    failure_ids = Set{Tuple{Int,Int}}()
     for failure in failures
         if !haskey(state.records, failure.job_id)
             throw(ArgumentError("failure targets unknown job id $(failure.job_id)"))
         end
-        if failure.job_id in failure_ids
-            throw(ArgumentError("at most one injected failure per job is supported"))
+        if (failure.job_id, failure.attempt_id) in failure_ids
+            throw(ArgumentError("at most one injected failure per job and attempt is supported"))
         end
         record = state.records[failure.job_id]
+        failure.attempt_id <= retry_policy.max_attempts || throw(ArgumentError("failure attempt exceeds retry budget"))
         if failure.time < record.arrival_time || failure.step_index > length(record.steps)
             throw(ArgumentError("failure must target an existing stage at or after arrival"))
         end
-        push!(failure_ids, failure.job_id)
+        push!(failure_ids, (failure.job_id, failure.attempt_id))
         schedule!(state, failure)
     end
 
@@ -87,8 +97,9 @@ places the first arrival at zero. Explicit `Vector{Job}` inputs specify their
 own arrival times.
 """
 function simulate(scenario::Scenario, resources::Dict{Symbol,Int}, capacity::Int = 1;
-                  queue_capacity::Int = typemax(Int))
-    state = SimState(scenario, resources, capacity; queue_capacity)
+                  queue_capacity::Int = typemax(Int), retry_policy::RetryPolicy=RetryPolicy(),
+                  trace::Bool=false, event_limit::Int=5_000_000, cancelled::Function=()->false)
+    state = SimState(scenario, resources, capacity; queue_capacity, retry_policy, trace, event_limit, cancelled)
     schedule_next_arrival!(state)
     return run!(state)
 end
@@ -103,16 +114,44 @@ may schedule further work, including lazy arrivals. Outcome vectors belong to
 the state; the monitoring summary is an independent snapshot.
 """
 function run!(state::SimState)
+    capture_trace!(state; force=true)
     while !isempty(state.calendar)
+        state.event_count += 1
+        state.event_count <= state.event_limit || throw(ArgumentError("event limit exceeded"))
+        if state.event_count % 256 == 1
+            yield()
+            state.cancelled() && throw(InterruptException())
+        end
         event = pop_next!(state)
-        if (event isa JobTimedOut || !isempty(state.failed_ids)) && is_stale_event(state, event)
+        if is_stale_event(state, event)
             continue
+        end
+        if event isa AttemptEvent && haskey(state.records, event.job_id)
+            validate_event_attempt(state.records[event.job_id], event)
         end
         state.now = event.time
         handle!(state, event)
         observe_state!(state)
+        capture_trace!(state)
     end
-    return SimulationResult(state.results, state.rejected, summarize_monitoring(state), state.failed)
+    capture_trace!(state; force=true)
+    return SimulationResult(state.results, state.rejected, summarize_monitoring(state), state.failed,
+                            state.attempts, state.trace)
+end
+
+"""Bound trace memory by deterministic thinning; aggregate integrals are never thinned."""
+function capture_trace!(state::SimState; force::Bool=false)
+    state.trace_enabled || return nothing
+    force || state.event_count % state.trace_stride == 0 || return nothing
+    if length(state.trace) >= 2048
+        state.trace = state.trace[1:2:end]
+        state.trace_stride *= 2
+    end
+    push!(state.trace, TracePoint(state.now, length(state.waiting), state.in_use,
+        length(state.results), length(state.failed), length(state.rejected),
+        Dict(k=>v.in_use for (k,v) in state.resources),
+        Dict(k=>length(v) for (k,v) in state.resource_waiting)))
+    return nothing
 end
 
 

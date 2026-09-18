@@ -15,12 +15,16 @@ export Estimate, RepeatedSummary, simulate_repeated
 export Scenario
 export Distribution, Constant, Exponential, LogNormal, sample
 export simulate
+export ServiceStep, RetryPolicy, FixedBackoff, ExponentialBackoff, FullJitterBackoff
+export retry_delay, AttemptResult
 
 # Workload definitions.
 include("models/distributions.jl")
 include("models/scenario.jl")
 include("models/jobs.jl")
 include("models/events.jl")
+include("models/backoff.jl")
+include("models/retry.jl")
 
 # Result types are needed by runtime state as well as reporting.
 include("reporting/results.jl")

@@ -9,7 +9,8 @@ completion. An unregistered resource throws `ArgumentError`.
 When no stages remain, schedule `ServiceCompleted` at `state.now`.
 
 The job must already hold a worker slot. This helper does not change worker
-occupancy, the job's start time, or its step index.
+occupancy, the job's start time, its step index, or its attempt identity.
+Every completion captures the record's current attempt when scheduled.
 """
 function start_current_step!(state::SimState, job_id::Int)
     record = state.records[job_id]
@@ -29,9 +30,14 @@ function start_current_step!(state::SimState, job_id::Int)
         end
         record.step_active = true
         completion_time = state.now + step.duration
-        schedule!(state, StepCompleted(completion_time, job_id, step_index))
+        isfinite(completion_time) || throw(ArgumentError("step completion time overflow"))
+        if step.failure_probability > 0 && rand(state.rng) < step.failure_probability
+            schedule!(state, JobFailed(state.now + step.duration / 2, job_id, step_index,
+                                      :stochastic; attempt_id=record.attempt_id))
+        end
+        schedule!(state, StepCompleted(completion_time, job_id, step_index; attempt_id=record.attempt_id))
     else
-        schedule!(state, ServiceCompleted(state.now, job_id))
+        schedule!(state, ServiceCompleted(state.now, job_id; attempt_id=record.attempt_id))
     end
     return nothing
 end
@@ -64,8 +70,11 @@ function start_next_job!(state::SimState)
         popfirst!(state.waiting)
         state.in_use += 1
         record.start_time = state.now
+        if isnan(record.first_start_time)
+            record.first_start_time = state.now
+        end
         if deadline !== nothing
-            schedule!(state, JobTimedOut(deadline, job_id))
+            schedule!(state, JobTimedOut(deadline, job_id; attempt_id=record.attempt_id))
         end
         start_current_step!(state, job_id)
     end

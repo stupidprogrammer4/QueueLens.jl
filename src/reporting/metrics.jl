@@ -45,7 +45,7 @@ number cannot be reproduced.
 `sorted` must be non-empty and sorted ascending; `q` must be in `(0, 1]`.
 """
 function percentile(sorted::Vector{Float64}, q::Float64)
-    if q <= 0.0 || q > 1.0
+    if !isfinite(q) || q <= 0.0 || q > 1.0 || isempty(sorted)
         throw(ArgumentError("q must be in (0, 1], got $q"))
     end
     return sorted[ceil(Int, q * length(sorted))]
@@ -76,10 +76,11 @@ that arrival is excluded. This window may overlap the service of discarded
 jobs when arrivals queue behind earlier work.
 """
 function summarize(results::Vector{JobResult}; warmup_fraction::Float64 = 0.0)
-    if warmup_fraction < 0.0 || warmup_fraction >= 1.0
+    if !isfinite(warmup_fraction) || warmup_fraction < 0.0 || warmup_fraction >= 1.0
         throw(ArgumentError("warmup_fraction must be in [0, 1), got $warmup_fraction"))
     end
     total = length(results)
+    total > 0 || throw(ArgumentError("cannot summarize empty results"))
     num_discarded = floor(Int, warmup_fraction * total)
     retained_results = results[(num_discarded + 1):end]
     num_completed = length(retained_results)

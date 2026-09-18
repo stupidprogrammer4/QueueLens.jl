@@ -38,7 +38,8 @@ end
     JobFailure(id, arrival_time, start_time, failure_time, step_index, reason)
 
 Terminal failure of a job that had already started service. Separate from both
-successful completions and admission rejections. No retry is modeled yet.
+successful completions and admission rejections. Intermediate failed attempts
+are stored separately in AttemptResult; only exhausted or denied retries appear here.
 The recorded stage is the one executing or waiting for a resource at failure
 time. A timeout is represented by `reason = :timeout`, not a separate outcome.
 """
@@ -80,27 +81,48 @@ struct MonitoringSummary
     resources::Dict{Symbol,ResourceSummary}
 end
 
-"""
-    SimulationResult(completed, rejected, monitoring)
-    SimulationResult(completed, rejected)
-    SimulationResult(completed, rejected, monitoring, failed)
+"""One executed attempt, including unsuccessful work preceding eventual success."""
+struct AttemptResult
+    job_id::Int
+    attempt_id::Int
+    start_time::Float64
+    finish_time::Float64
+    step_index::Int
+    reason::Symbol
+end
 
-Outcomes of one finished simulation. `completed` holds `JobResult`s in
-completion order; `rejected` holds `JobRejection`s in rejection order.
-Each input job has one outcome. Rejected jobs have no service latency and
-must not be included in the completed-job latency statistics.
-`failed` holds terminal `JobFailure`s separately; omitted failure vectors are
-fresh empty vectors. Failed jobs have no successful completion outcome.
-Simulation entry points always provide `monitoring::MonitoringSummary`.
-Manually assembled outcome-only reports may omit it; `nothing` means unavailable,
-not zero utilization. Outcomes alone cannot reconstruct resource histories.
+"""Bounded event-driven history used for charts; monitoring integrals remain exact."""
+struct TracePoint
+    time::Float64
+    waiting::Int
+    busy::Int
+    completed::Int
+    failed::Int
+    rejected::Int
+    resource_busy::Dict{Symbol,Int}
+    resource_waiting::Dict{Symbol,Int}
+end
+
+"""
+Terminal outcomes, executed attempts and optional chart history for one run.
+Each logical job has one completed, rejected or failed outcome. Attempt failures
+preceding eventual success appear only in attempts. Monitoring covers the full
+run; latency summaries use successful jobs. Legacy 2/3/4-argument constructors
+receive independent empty attempt/trace storage and may omit monitoring.
 """
 struct SimulationResult
     completed::Vector{JobResult}
     rejected::Vector{JobRejection}
     monitoring::Union{Nothing,MonitoringSummary}
     failed::Vector{JobFailure}
+    attempts::Vector{AttemptResult}
+    trace::Vector{TracePoint}
 end
+
+# Preserve outcome-only report construction for existing callers.
+SimulationResult(completed::Vector{JobResult}, rejected::Vector{JobRejection},
+                 monitoring::Union{Nothing,MonitoringSummary}, failed::Vector{JobFailure}) =
+    SimulationResult(completed, rejected, monitoring, failed, AttemptResult[], TracePoint[])
 
 # Runs without failure outcomes receive independent empty failure storage.
 SimulationResult(completed::Vector{JobResult}, rejected::Vector{JobRejection},

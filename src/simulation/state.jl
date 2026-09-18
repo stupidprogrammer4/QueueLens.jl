@@ -11,7 +11,9 @@ final `JobResult` is built.
 
 `start_time` is `NaN` until the job actually enters service. `timeout` retains
 the input duration; the deadline is `start_time + timeout` when enabled.
-Retries will need separate attempt identity.
+`attempt_id` starts at one and identifies this execution, not its stage.
+Stage transitions do not increment it. Retrying increments it before backoff,
+so events from the old attempt immediately become stale.
 
 `steps` retains the job's read-only stage descriptions. `step_index` starts at
 1 and identifies the next unfinished stage. An index beyond `length(steps)`
@@ -31,10 +33,13 @@ mutable struct JobRecord
     step_active::Bool
     held_resource::Union{Nothing,Symbol}
     timeout::Union{Nothing,Float64}
+    attempt_id::Int
+    first_start_time::Float64
+    retry_pending::Bool
 end
 
 # Share the read-only steps; each record starts with its own unset start time and index.
-JobRecord(job::Job) = JobRecord(job.id, job.arrival_time, job.service_time, NaN, job.steps, 1, false, nothing, job.timeout)
+JobRecord(job::Job) = JobRecord(job.id, job.arrival_time, job.service_time, NaN, job.steps, 1, false, nothing, job.timeout, 1, NaN, false)
 
 using DataStructures: BinaryMinHeap
 
@@ -153,6 +158,15 @@ mutable struct SimState{R<:AbstractRNG}
     clock_log::Vector{Float64}
     jobs_generated::Int
     max_calendar_size::Int
+    retry_policy::RetryPolicy
+    terminal_attempts::Dict{Int,Int}
+    attempts::Vector{AttemptResult}
+    trace::Vector{TracePoint}
+    trace_enabled::Bool
+    trace_stride::Int
+    event_count::Int
+    event_limit::Int
+    cancelled::Function
 end
 
 """
@@ -172,6 +186,10 @@ function SimState(
     capacity::Int = 1,
     rng::R = Xoshiro(scenario.seed);
     queue_capacity::Int = typemax(Int),
+    retry_policy::RetryPolicy = RetryPolicy(),
+    trace::Bool = false,
+    event_limit::Int = 5_000_000,
+    cancelled::Function = () -> false,
 ) where {R<:AbstractRNG}
     if capacity <= 0
         throw(ArgumentError("capacity must be positive"))
@@ -179,12 +197,14 @@ function SimState(
     if queue_capacity < 0
         throw(ArgumentError("queue_capacity must be non-negative"))
     end
+    event_limit > 0 || throw(ArgumentError("event_limit must be positive"))
     state = SimState{R}(
         rng, scenario, 0.0, BinaryMinHeap{CalendarEntry}(), 0,
         Int[], queue_capacity, Dict{Symbol,ResourcePool}(), Dict{Symbol,Vector{Int}}(),
         capacity, 0, TimeWeightedStat(), TimeWeightedStat(), Dict{Symbol,TimeWeightedStat}(),
         Dict{Symbol,TimeWeightedStat}(), Dict{Int,JobRecord}(), JobResult[], JobRejection[],
-        JobFailure[], Set{Int}(), Float64[], 0, 0
+        JobFailure[], Set{Int}(), Float64[], 0, 0, retry_policy, Dict{Int,Int}(),
+        AttemptResult[], TracePoint[], trace, 1, 0, event_limit, cancelled
     )
     for (name, pool_capacity) in resources
         register_resource!(state, name, pool_capacity)

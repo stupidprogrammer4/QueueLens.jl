@@ -9,6 +9,7 @@ include("support/fixtures.jl")
         include("models/distribution_tests.jl")
         include("models/service_step_tests.jl")
         include("models/job_tests.jl")
+        include("models/retry_policy_tests.jl")
     end
     @testset "Calendar and scheduling" begin
         include("simulation/calendar_tests.jl")
@@ -32,6 +33,16 @@ include("support/fixtures.jl")
     @testset "Timeouts" begin
         include("timeouts/timeout_scaffolding_tests.jl")
         include("timeouts/timeout_contract_tests.jl")
+    end
+    @testset "Attempt identity" begin
+        include("attempts/attempt_scaffolding_tests.jl")
+        include("attempts/attempt_contract_tests.jl")
+    end
+    @testset "Retry policies" begin
+        include("retries/retry_policy_contract_tests.jl")
+        include("retries/backoff_scaffolding_tests.jl")
+        include("retries/backoff_contract_tests.jl")
+        include("retries/retry_lifecycle_tests.jl")
     end
     @testset "Monitoring and reporting" begin
         include("reporting/monitoring_tests.jl")

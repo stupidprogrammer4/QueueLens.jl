@@ -54,7 +54,7 @@ function estimate(values::Vector{Float64})
         s = std(values)
         halfwidth = t * s / sqrt(num_runs)
     end
-    if num_runs == Inf
+    if num_runs == 0
         throw(ArgumentError("Cannot estimate from an empty vector"))
     end
     return Estimate(mean(values), halfwidth, num_runs)

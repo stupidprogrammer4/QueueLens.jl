@@ -14,13 +14,18 @@ throw `ArgumentError`.
 struct ServiceStep
     resource::Union{Nothing,Symbol}
     duration::Float64
+    failure_probability::Float64
 
     # Reject invalid durations here so all steps are safe to schedule.
-    function ServiceStep(resource::Union{Nothing,Symbol}, duration::Float64)
+    function ServiceStep(resource::Union{Nothing,Symbol}, duration::Float64;
+                         failure_probability::Real=0.0)
         if duration < 0 || !isfinite(duration)
             throw(ArgumentError("service step duration must be nonnegative"))
         end
-        new(resource, float(duration))
+        probability = Float64(failure_probability)
+        isfinite(probability) && 0 <= probability <= 1 ||
+            throw(ArgumentError("failure_probability must be in [0, 1]"))
+        new(resource, float(duration), probability)
     end
 end
 
